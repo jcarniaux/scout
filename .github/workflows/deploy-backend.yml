@@ -42,15 +42,14 @@ jobs:
         run: ruff check lambdas/
 
       - name: Type check imports
-        run: python -c "
-          import importlib, pathlib, sys
+        run: |
+          python - <<'EOF'
+          import pathlib, sys
           errors = []
           for f in pathlib.Path('lambdas').rglob('*.py'):
               if f.name == '__init__.py':
                   continue
-              module = str(f.with_suffix('')).replace('/', '.')
               try:
-                  # Just check syntax, not runtime imports
                   compile(f.read_text(), str(f), 'exec')
               except SyntaxError as e:
                   errors.append(f'{f}: {e}')
@@ -58,7 +57,7 @@ jobs:
               print('\n'.join(errors))
               sys.exit(1)
           print('All files pass syntax check')
-        "
+          EOF
 
   build-and-deploy:
     name: Build & Deploy Lambdas
