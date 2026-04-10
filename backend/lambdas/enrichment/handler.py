@@ -235,7 +235,14 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             #   pk / sk       — primary key (lowercase, as defined in Terraform)
             #   gsi1pk        — DateIndex / RatingIndex partition key (value = "JOB")
             #   postedDate    — DateIndex range key (ISO string for date-range queries)
-            posted_date = body.get("date_posted", datetime.utcnow().date().isoformat()).strip()
+
+            # JobSpy returns Python's NaN/None for missing dates, which json.dumps
+            # renders as the string "nan" or "None". Normalize these to None so
+            # the DateIndex range key is omitted (or gets today's date as fallback).
+            raw_date = body.get("date_posted", "")
+            if not raw_date or str(raw_date).lower() in ("nan", "none", "null", ""):
+                raw_date = None
+            posted_date = raw_date or datetime.utcnow().date().isoformat()
             job_item = {
                 "pk": f"JOB#{job_hash}",
                 "sk": f"SOURCE#{source}#{hashlib.md5(body.get('job_url', '').encode()).hexdigest()}",
@@ -250,8 +257,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "salary_max": body.get("salary_max"),
                 "job_url": body.get("job_url", "").strip(),
                 "date_posted": posted_date,
-                "description": body.get("description", "")[:2000],
-                "job_type": body.get("job_type", "").strip(),
+                "description": (body.get("description") or "")[:2000] if str(body.get("description", "")).lower() not in ("none", "nan", "null") else "",
+                "job_type": body.get("job_type", "").strip() if str(body.get("job_type", "")).lower() not in ("none", "nan", "null") else None,
                 "created_at": datetime.utcnow().isoformat(),
                 "crawled_at": body.get("crawled_at", datetime.utcnow().isoformat()),
                 "ttl": ttl,

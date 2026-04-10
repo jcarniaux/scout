@@ -40,6 +40,47 @@ def get_date_range_start(date_range: Optional[str]) -> str:
     return start.isoformat()
 
 
+def serialize_job(item: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Map raw DynamoDB field names to the camelCase shape the frontend expects,
+    and sanitize sentinel strings ("nan", "None") that JobSpy emits for missing
+    values — leaving them as None so JSON renders null rather than a string.
+    """
+    def clean(value: Any) -> Optional[Any]:
+        if value is None:
+            return None
+        if isinstance(value, str) and value.lower() in ("nan", "none", ""):
+            return None
+        return value
+
+    # pk is "JOB#{hash}" — strip the prefix to get the bare job ID
+    pk = item.get("pk", "")
+    job_id = pk[len("JOB#"):] if pk.startswith("JOB#") else pk
+
+    return {
+        "jobId":          job_id,
+        "roleName":       clean(item.get("title")),
+        "company":        clean(item.get("company")) or "Unknown",
+        "location":       clean(item.get("location")) or "",
+        "source":         item.get("source", ""),
+        "sourceUrl":      clean(item.get("job_url")),
+        "postedDate":     clean(item.get("postedDate") or item.get("date_posted")),
+        "createdAt":      item.get("created_at") or item.get("crawled_at"),
+        "description":    clean(item.get("description")),
+        "jobType":        clean(item.get("job_type")),
+        "salaryMin":      item.get("salary_min"),
+        "salaryMax":      item.get("salary_max"),
+        "glassdoorRating": item.get("rating"),
+        "glassdoorUrl":   clean(item.get("glassdoor_url")),
+        "benefits":       clean(item.get("benefits")),
+        "ptoDays":        item.get("pto_days"),
+        "sickDays":       item.get("sick_days"),
+        "match401k":      clean(item.get("match_401k")),
+        "applicationStatus": item.get("user_status", "NOT_APPLIED"),
+        "notes":          clean(item.get("notes")),
+    }
+
+
 def filter_jobs(
     jobs: List[Dict[str, Any]],
     user_id: str,
@@ -147,12 +188,9 @@ def get_single_job(
             "sk": f"JOB#{job_id}",
         }
         status_item = dynamodb.get_item(user_status_table, user_status_key)
-        if status_item:
-            job["user_status"] = status_item.get("status", "NOT_APPLIED")
-        else:
-            job["user_status"] = "NOT_APPLIED"
+        job["user_status"] = status_item.get("status", "NOT_APPLIED") if status_item else "NOT_APPLIED"
 
-        return success_response(job)
+        return success_response(serialize_job(job))
 
     except Exception as e:
         logger.error(f"Error getting job {job_id}: {e}", exc_info=True)
@@ -201,7 +239,7 @@ def list_jobs(
             scan_index_forward=False,
         )
 
-        # Deserialize and filter
+        # Deserialize, filter, then map to frontend shape
         jobs = [dynamo_deserialize(item) for item in items]
         filtered_jobs = filter_jobs(
             jobs,
@@ -211,8 +249,8 @@ def list_jobs(
             sort_by=sort_by,
         )
 
-        # Paginate
-        paginated_jobs = filtered_jobs[offset : offset + page_size]
+        # Paginate and serialize to frontend camelCase shape
+        paginated_jobs = [serialize_job(j) for j in filtered_jobs[offset : offset + page_size]]
 
         return success_response({
             "jobs": paginated_jobs,

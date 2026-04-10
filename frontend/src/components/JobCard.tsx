@@ -5,6 +5,18 @@ import { RatingBadge } from './RatingBadge';
 import { ExternalLink, MapPin, DollarSign, Calendar } from 'lucide-react';
 import { useUpdateStatus } from '@/hooks/useJobs';
 
+/**
+ * Safely format a date string for display.
+ * Returns "Date unknown" for null, undefined, "nan", or any other invalid value
+ * rather than throwing a RangeError from date-fns.
+ */
+function formatPostedDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return 'Date unknown';
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return 'Date unknown';
+  return formatDistanceToNow(date, { addSuffix: true });
+}
+
 interface JobCardProps {
   job: Job;
 }
@@ -60,7 +72,7 @@ export function JobCard({ job }: JobCardProps) {
         </div>
         <div className="flex items-center gap-1.5">
           <Calendar className="w-4 h-4 flex-shrink-0" />
-          <span>{formatDistanceToNow(new Date(job.postedDate), { addSuffix: true })}</span>
+          <span>{formatPostedDate(job.postedDate)}</span>
         </div>
       </div>
 

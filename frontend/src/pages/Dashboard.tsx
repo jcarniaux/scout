@@ -53,13 +53,14 @@ export function Dashboard() {
                 </span>
               )}
             </h1>
-            {data && data.items.length > 0 && (
-              <p className="text-sm text-gray-600 mt-1">
-                Last updated {formatDistanceToNow(new Date(data.items[0].createdAt), {
-                  addSuffix: true,
-                })}
-              </p>
-            )}
+            {data && data.items.length > 0 && (() => {
+              const d = new Date(data.items[0].createdAt);
+              return !isNaN(d.getTime()) ? (
+                <p className="text-sm text-gray-600 mt-1">
+                  Last updated {formatDistanceToNow(d, { addSuffix: true })}
+                </p>
+              ) : null;
+            })()}
           </div>
           <button
             onClick={() => refetch()}
