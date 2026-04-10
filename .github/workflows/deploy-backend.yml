@@ -83,25 +83,14 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Build Lambda packages
+      - name: Build Lambda packages and layer
         run: |
           chmod +x build.sh
+          # build.sh builds all code zips AND the dependency layer in one pass.
+          # It runs pip without --quiet so failures are immediately visible,
+          # and verifies jobspy is importable before zipping.
           ./build.sh
-
-      - name: Build dependency layer
-        run: |
-          mkdir -p build/layer/python
-          # Install only runtime deps (no dev tools) and strip bytecode to keep size down
-          pip install -r requirements.txt \
-            -t build/layer/python \
-            --quiet \
-            --no-compile
-          # Remove test dirs, dist-info, and __pycache__ to trim the zip
-          find build/layer/python -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
-          find build/layer/python -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-          find build/layer/python -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
-          cd build/layer && zip -r ../dependencies-layer.zip python/ -x "*.pyc"
-          echo "Layer zip size: $(du -sh ../dependencies-layer.zip | cut -f1)"
+          echo "Layer zip size: $(du -sh build/dependencies-layer.zip | cut -f1)"
 
       - name: Publish Lambda layer via S3
         id: layer
@@ -208,6 +197,10 @@ jobs:
             --function-name scout-purge \
             --zip-file fileb://build/crawlers.zip \
             --publish > /dev/null
+          aws lambda wait function-updated --function-name scout-purge
+          aws lambda update-function-configuration \
+            --function-name scout-purge \
+            --layers "${{ steps.layer.outputs.layer_arn }}" > /dev/null
           aws lambda wait function-updated --function-name scout-purge
           echo "✓ scout-purge deployed"
 

@@ -87,11 +87,29 @@ build_zip reports
 info "Building dependency layer..."
 LAYER_PYTHON="$BUILD_DIR/layer/python"
 mkdir -p "$LAYER_PYTHON"
+
+# Install without --quiet so failures are immediately visible
 pip install \
   -r "$SCRIPT_DIR/requirements.txt" \
   -t "$LAYER_PYTHON" \
-  --quiet \
   --no-cache-dir
+
+# Strip test dirs, __pycache__, and dist-info metadata to keep the zip lean
+find "$LAYER_PYTHON" -type d -name "tests"       -exec rm -rf {} + 2>/dev/null || true
+find "$LAYER_PYTHON" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find "$LAYER_PYTHON" -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
+
+# Verify critical package is importable before zipping (fail loudly if missing)
+python3 - "$LAYER_PYTHON" <<'PYVERIFY'
+import sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import jobspy
+    print(f"✓ jobspy importable from {sys.argv[1]}")
+except ImportError as e:
+    print(f"✗ jobspy import failed: {e}", file=sys.stderr)
+    sys.exit(1)
+PYVERIFY
 
 (
   cd "$BUILD_DIR/layer"
