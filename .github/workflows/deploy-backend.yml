@@ -1,0 +1,190 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install ruff pytest pytest-cov
+
+      - name: Lint
+        run: ruff check lambdas/
+
+      - name: Type check imports
+        run: python -c "
+          import importlib, pathlib, sys
+          errors = []
+          for f in pathlib.Path('lambdas').rglob('*.py'):
+              if f.name == '__init__.py':
+                  continue
+              module = str(f.with_suffix('')).replace('/', '.')
+              try:
+                  # Just check syntax, not runtime imports
+                  compile(f.read_text(), str(f), 'exec')
+              except SyntaxError as e:
+                  errors.append(f'{f}: {e}')
+          if errors:
+              print('\n'.join(errors))
+              sys.exit(1)
+          print('All files pass syntax check')
+        "
+
+  build-and-deploy:
+    name: Build & Deploy Lambdas
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build Lambda packages
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Build dependency layer
+        run: |
+          mkdir -p build/layer/python
+          pip install -r requirements.txt -t build/layer/python --quiet
+          cd build/layer && zip -r ../dependencies-layer.zip python/ -x "*__pycache__*"
+
+      - name: Publish Lambda layer
+        id: layer
+        run: |
+          LAYER_ARN=$(aws lambda publish-layer-version \
+            --layer-name scout-dependencies \
+            --zip-file fileb://build/dependencies-layer.zip \
+            --compatible-runtimes python3.12 \
+            --query 'LayerVersionArn' \
+            --output text)
+          echo "layer_arn=$LAYER_ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy crawler Lambdas
+        run: |
+          FUNCTIONS=(
+            "scout-crawler-linkedin"
+            "scout-crawler-indeed"
+            "scout-crawler-glassdoor"
+            "scout-crawler-ziprecruiter"
+            "scout-crawler-dice"
+          )
+          for fn in "${FUNCTIONS[@]}"; do
+            echo "Deploying $fn..."
+            aws lambda update-function-code \
+              --function-name "$fn" \
+              --zip-file fileb://build/crawlers.zip \
+              --publish > /dev/null
+            aws lambda update-function-configuration \
+              --function-name "$fn" \
+              --layers "${{ steps.layer.outputs.layer_arn }}" > /dev/null
+            echo "  ✓ $fn deployed"
+          done
+
+      - name: Deploy enrichment Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name scout-enrichment \
+            --zip-file fileb://build/enrichment.zip \
+            --publish > /dev/null
+          aws lambda update-function-configuration \
+            --function-name scout-enrichment \
+            --layers "${{ steps.layer.outputs.layer_arn }}" > /dev/null
+          echo "✓ scout-enrichment deployed"
+
+      - name: Deploy API Lambdas
+        run: |
+          FUNCTIONS=(
+            "scout-api-get-jobs"
+            "scout-api-update-status"
+            "scout-api-user-settings"
+          )
+          for fn in "${FUNCTIONS[@]}"; do
+            echo "Deploying $fn..."
+            aws lambda update-function-code \
+              --function-name "$fn" \
+              --zip-file fileb://build/api.zip \
+              --publish > /dev/null
+            aws lambda update-function-configuration \
+              --function-name "$fn" \
+              --layers "${{ steps.layer.outputs.layer_arn }}" > /dev/null
+            echo "  ✓ $fn deployed"
+          done
+
+      - name: Deploy report Lambdas
+        run: |
+          FUNCTIONS=(
+            "scout-daily-report"
+            "scout-weekly-report"
+          )
+          for fn in "${FUNCTIONS[@]}"; do
+            echo "Deploying $fn..."
+            aws lambda update-function-code \
+              --function-name "$fn" \
+              --zip-file fileb://build/reports.zip \
+              --publish > /dev/null
+            aws lambda update-function-configuration \
+              --function-name "$fn" \
+              --layers "${{ steps.layer.outputs.layer_arn }}" > /dev/null
+            echo "  ✓ $fn deployed"
+          done
+
+      - name: Deploy purge Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name scout-purge \
+            --zip-file fileb://build/crawlers.zip \
+            --publish > /dev/null
+          echo "✓ scout-purge deployed"
+
+      - name: Summary
+        run: |
+          echo "## Backend Deployment Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Layer: \`${{ steps.layer.outputs.layer_arn }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Packages: crawlers, enrichment, api, reports" >> "$GITHUB_STEP_SUMMARY"

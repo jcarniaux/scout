@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Magnifying glass/scout icon -->
+  <defs>
+    <style>
+      .scout-icon { fill: none; stroke: #2563eb; stroke-width: 4; stroke-linecap: round; }
+    </style>
+  </defs>
+
+  <!-- Circle (magnifying glass lens) -->
+  <circle cx="40" cy="40" r="28" class="scout-icon"/>
+
+  <!-- Handle -->
+  <line x1="60" y1="60" x2="80" y2="80" class="scout-icon"/>
+
+  <!-- Center dot -->
+  <circle cx="40" cy="40" r="3" fill="#2563eb"/>
+</svg>

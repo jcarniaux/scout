@@ -1,0 +1,84 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  NODE_VERSION: "20"
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        env:
+          VITE_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
+          VITE_USER_POOL_CLIENT_ID: ${{ secrets.COGNITO_USER_POOL_CLIENT_ID }}
+          VITE_API_URL: ${{ secrets.API_GATEWAY_URL }}
+        run: npm run build
+
+      - name: Deploy to S3
+        run: |
+          aws s3 sync dist/ s3://${{ secrets.FRONTEND_BUCKET }} \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html" \
+            --exclude "*.json"
+
+          # index.html and config should not be cached aggressively
+          aws s3 cp dist/index.html s3://${{ secrets.FRONTEND_BUCKET }}/index.html \
+            --cache-control "public, max-age=0, must-revalidate"
+
+          # Copy any JSON config files without aggressive caching
+          find dist -name "*.json" -exec \
+            aws s3 cp {} s3://${{ secrets.FRONTEND_BUCKET }}/{} \
+              --cache-control "public, max-age=0, must-revalidate" \;
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/index.html" "/"
+
+      - name: Summary
+        run: |
+          echo "## Frontend Deployment Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Site: https://scout.carniaux.io" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Bucket: \`${{ secrets.FRONTEND_BUCKET }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- CloudFront invalidation initiated" >> "$GITHUB_STEP_SUMMARY"

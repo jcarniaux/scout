@@ -1,0 +1,199 @@
+{
+  "Comment": "Scout crawl orchestration with parallel job sources",
+  "StartAt": "ParallelCrawl",
+  "States": {
+    "ParallelCrawl": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "CrawlLinkedIn",
+          "States": {
+            "CrawlLinkedIn": {
+              "Type": "Task",
+              "Resource": "${linkedin_lambda_arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "LinkedInError"
+                }
+              ],
+              "End": true
+            },
+            "LinkedInError": {
+              "Type": "Pass",
+              "Result": {
+                "source": "linkedin",
+                "status": "error"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "CrawlIndeed",
+          "States": {
+            "CrawlIndeed": {
+              "Type": "Task",
+              "Resource": "${indeed_lambda_arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "IndeedError"
+                }
+              ],
+              "End": true
+            },
+            "IndeedError": {
+              "Type": "Pass",
+              "Result": {
+                "source": "indeed",
+                "status": "error"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "CrawlGlassdoor",
+          "States": {
+            "CrawlGlassdoor": {
+              "Type": "Task",
+              "Resource": "${glassdoor_lambda_arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "GlassdoorError"
+                }
+              ],
+              "End": true
+            },
+            "GlassdoorError": {
+              "Type": "Pass",
+              "Result": {
+                "source": "glassdoor",
+                "status": "error"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "CrawlZipRecruiter",
+          "States": {
+            "CrawlZipRecruiter": {
+              "Type": "Task",
+              "Resource": "${ziprecruiter_lambda_arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "ZipRecruiterError"
+                }
+              ],
+              "End": true
+            },
+            "ZipRecruiterError": {
+              "Type": "Pass",
+              "Result": {
+                "source": "ziprecruiter",
+                "status": "error"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "CrawlDice",
+          "States": {
+            "CrawlDice": {
+              "Type": "Task",
+              "Resource": "${dice_lambda_arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "DiceError"
+                }
+              ],
+              "End": true
+            },
+            "DiceError": {
+              "Type": "Pass",
+              "Result": {
+                "source": "dice",
+                "status": "error"
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "Purge"
+    },
+    "Purge": {
+      "Type": "Task",
+      "Resource": "${purge_lambda_arn}",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 1,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "PurgeError"
+        }
+      ],
+      "Next": "Success"
+    },
+    "PurgeError": {
+      "Type": "Pass",
+      "Result": "Purge failed but crawl completed",
+      "Next": "Success"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}
