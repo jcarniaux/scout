@@ -44,7 +44,7 @@ def get_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return error_response("Missing environment variables", 500)
 
     try:
-        item = dynamodb.get_item(users_table, {"PK": f"USER#{user_sub}"})
+        item = dynamodb.get_item(users_table, {"pk": f"USER#{user_sub}"})
 
         if not item:
             # User doesn't exist yet, return defaults
@@ -57,7 +57,7 @@ def get_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         item = dynamo_deserialize(item)
         return success_response({
-            "user_id": item.get("PK"),
+            "user_id": item.get("pk"),
             "email": item.get("email"),
             "daily_report": item.get("daily_report", False),
             "weekly_report": item.get("weekly_report", False),
@@ -92,7 +92,7 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # Build item
         item = {
-            "PK": f"USER#{user_sub}",
+            "pk": f"USER#{user_sub}",
             "user_id": f"USER#{user_sub}",
         }
 
@@ -104,7 +104,7 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         item["updated_at"] = datetime.utcnow().isoformat()
 
         # Check if this is first creation
-        existing = dynamodb.get_item(users_table, {"PK": f"USER#{user_sub}"})
+        existing = dynamodb.get_item(users_table, {"pk": f"USER#{user_sub}"})
         if not existing:
             item["created_at"] = datetime.utcnow().isoformat()
 
@@ -112,7 +112,7 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         dynamodb.put_item(users_table, dynamo_serialize(item))
 
         return success_response({
-            "user_id": item["PK"],
+            "user_id": item["pk"],
             "email": item.get("email"),
             "daily_report": item["daily_report"],
             "weekly_report": item["weekly_report"],

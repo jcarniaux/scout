@@ -68,11 +68,11 @@ def filter_jobs(
         try:
             items, _ = dynamodb.query(
                 jobs_table,
-                "PK = :pk",
+                "pk = :pk",
                 {":pk": user_id},
             )
             for item in items:
-                job_id = item.get("SK", "").replace("JOB#", "")
+                job_id = item.get("sk", "").replace("JOB#", "")
                 user_statuses[job_id] = item.get("status")
         except Exception as e:
             logger.warning(f"Error fetching user statuses: {e}")
@@ -129,12 +129,11 @@ def get_single_job(
         return error_response("Missing jobId parameter", 400)
 
     try:
-        # Query job by hash
+        # Query job by pk = "JOB#{job_hash}" — no separate GSI needed
         items, _ = dynamodb.query(
             jobs_table,
-            "job_hash = :hash",
-            {":hash": job_id},
-            index_name="JobHashIndex",
+            "pk = :pk",
+            {":pk": f"JOB#{job_id}"},
         )
 
         if not items:
@@ -144,8 +143,8 @@ def get_single_job(
 
         # Get user's status for this job
         user_status_key = {
-            "PK": f"USER#{user_sub}",
-            "SK": f"JOB#{job_id}",
+            "pk": f"USER#{user_sub}",
+            "sk": f"JOB#{job_id}",
         }
         status_item = dynamodb.get_item(user_status_table, user_status_key)
         if status_item:
@@ -191,12 +190,14 @@ def list_jobs(
         # Query jobs by date
         start_date = get_date_range_start(date_range)
 
+        # DateIndex: hash_key=gsi1pk ("JOB"), range_key=postedDate
+        # All jobs share gsi1pk="JOB" so we can query the full date range.
         items, last_key = dynamodb.query(
             jobs_table,
-            "created_at >= :start",
-            {":start": start_date},
+            "gsi1pk = :pk AND postedDate >= :start",
+            {":pk": "JOB", ":start": start_date},
             index_name="DateIndex",
-            limit=offset + page_size + 10,  # Fetch extra for filtering
+            limit=offset + page_size + 10,
             scan_index_forward=False,
         )
 

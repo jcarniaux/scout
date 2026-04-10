@@ -56,7 +56,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         for user in subscribed_users:
             try:
-                user_id = user.get("PK")
+                user_id = user.get("pk")
                 email = user.get("email")
 
                 if not email or not user_id:
@@ -65,7 +65,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 # Get user's application statuses
                 statuses, _ = dynamodb.query(
                     user_status_table,
-                    "PK = :pk",
+                    "pk = :pk",
                     {":pk": user_id},
                 )
 
@@ -74,7 +74,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 for status_item in statuses:
                     status_item = dynamo_deserialize(status_item)
                     status = status_item.get("status", "NOT_APPLIED")
-                    job_id = status_item.get("SK", "").replace("JOB#", "")
+                    job_id = status_item.get("sk", "").replace("JOB#", "")
 
                     if status not in status_groups:
                         status_groups[status] = []
@@ -83,9 +83,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     try:
                         job_items, _ = dynamodb.query(
                             jobs_table,
-                            "job_hash = :hash",
-                            {":hash": job_id},
-                            index_name="JobHashIndex",
+                            "pk = :pk",
+                            {":pk": f"JOB#{job_id}"},
                         )
                         if job_items:
                             job = dynamo_deserialize(job_items[0])
@@ -97,8 +96,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 # Count new jobs this week
                 new_jobs, _ = dynamodb.query(
                     jobs_table,
-                    "created_at >= :start",
-                    {":start": week_ago},
+                    "gsi1pk = :pk AND postedDate >= :start",
+                    {":pk": "JOB", ":start": week_ago},
                     index_name="DateIndex",
                 )
                 new_jobs_count = len(new_jobs)

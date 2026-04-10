@@ -63,8 +63,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # Build item
         item = {
-            "PK": f"USER#{user_sub}",
-            "SK": f"JOB#{job_id}",
+            "pk": f"USER#{user_sub}",
+            "sk": f"JOB#{job_id}",
             "user_id": f"USER#{user_sub}",
             "job_id": f"JOB#{job_id}",
             "status": status,
@@ -78,8 +78,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         dynamodb.put_item(user_status_table, dynamo_serialize(item))
 
         return success_response({
-            "user_id": item["PK"],
-            "job_id": item["SK"],
+            "user_id": item["pk"],
+            "job_id": item["sk"],
             "status": status,
             "updated_at": item["updated_at"],
             "notes": notes,

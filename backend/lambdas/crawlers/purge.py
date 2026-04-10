@@ -54,7 +54,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 break
 
             # Delete in batches
-            items_to_delete = [{"PK": item["PK"], "SK": item["SK"]} for item in items]
+            items_to_delete = [{"pk": item["pk"], "sk": item["sk"]} for item in items]
 
             dynamodb.batch_write(jobs_table, [], items_to_delete)
             jobs_deleted += len(items_to_delete)
@@ -75,20 +75,19 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         items_to_delete = []
         for status_item in status_items:
-            job_id = status_item.get("SK", "").replace("JOB#", "")
+            job_id = status_item.get("sk", "").replace("JOB#", "")
 
-            # Check if job exists
+            # Check if job exists — query by pk = "JOB#{job_hash}" (no JobHashIndex needed)
             try:
                 job_items, _ = dynamodb.query(
                     jobs_table,
-                    "job_hash = :hash",
-                    {":hash": job_id},
-                    index_name="JobHashIndex",
+                    "pk = :pk",
+                    {":pk": f"JOB#{job_id}"},
                 )
 
                 if not job_items:
                     # Job doesn't exist, mark status for deletion
-                    items_to_delete.append({"PK": status_item["PK"], "SK": status_item["SK"]})
+                    items_to_delete.append({"pk": status_item["pk"], "sk": status_item["sk"]})
             except Exception as e:
                 logger.warning(f"Error checking job {job_id}: {e}")
                 continue

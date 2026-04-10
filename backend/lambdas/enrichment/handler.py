@@ -218,10 +218,17 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             # Compute hash for deduplication
             job_hash = compute_job_hash(title, company, location)
 
-            # Build job item for DynamoDB
+            # Build job item for DynamoDB.
+            # Key names must match the table schema exactly (case-sensitive):
+            #   pk / sk       — primary key (lowercase, as defined in Terraform)
+            #   gsi1pk        — DateIndex / RatingIndex partition key (value = "JOB")
+            #   postedDate    — DateIndex range key (ISO string for date-range queries)
+            posted_date = body.get("date_posted", datetime.utcnow().date().isoformat()).strip()
             job_item = {
-                "PK": f"JOB#{job_hash}",
-                "SK": f"SOURCE#{source}#{hashlib.md5(body.get('job_url', '').encode()).hexdigest()}",
+                "pk": f"JOB#{job_hash}",
+                "sk": f"SOURCE#{source}#{hashlib.md5(body.get('job_url', '').encode()).hexdigest()}",
+                "gsi1pk": "JOB",           # Required for DateIndex and RatingIndex queries
+                "postedDate": posted_date, # DateIndex range key
                 "job_hash": job_hash,
                 "source": source,
                 "title": title,
@@ -230,7 +237,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "salary_min": body.get("salary_min"),
                 "salary_max": body.get("salary_max"),
                 "job_url": body.get("job_url", "").strip(),
-                "date_posted": body.get("date_posted", "").strip(),
+                "date_posted": posted_date,
                 "description": body.get("description", "")[:2000],
                 "job_type": body.get("job_type", "").strip(),
                 "created_at": datetime.utcnow().isoformat(),
@@ -253,7 +260,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 dynamodb.put_item(
                     jobs_table,
                     dynamo_serialize(job_item),
-                    condition_expression="attribute_not_exists(PK)",
+                    condition_expression="attribute_not_exists(pk)",
                 )
                 total_stored += 1
                 logger.info(f"Stored job: {title} at {company}")
