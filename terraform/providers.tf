@@ -17,11 +17,11 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "scout-tfstate-634502671794"
-    key            = "prod/terraform.tfstate"
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "scout-tflock"
+    bucket      = "scout-tfstate-634502671794"
+    key         = "prod/terraform.tfstate"
+    region      = "us-east-1"
+    encrypt     = true
+    use_lockfile = true
   }
 }
 
