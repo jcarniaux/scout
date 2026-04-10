@@ -1,11 +1,20 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthenticator } from '@aws-amplify/ui-react';
+import { fetchUserAttributes } from 'aws-amplify/auth';
 import { Menu, X } from 'lucide-react';
 
 export function Navbar() {
-  const { user, signOut } = useAuthenticator((context) => [context.user, context.signOut]);
+  const { signOut } = useAuthenticator((context) => [context.signOut]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [email, setEmail] = useState<string>('');
+
+  // Amplify v6: user attributes must be fetched async — they're no longer on the user object
+  useEffect(() => {
+    fetchUserAttributes()
+      .then((attrs) => setEmail(attrs.email ?? ''))
+      .catch(() => setEmail(''));
+  }, []);
 
   return (
     <nav className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-40">
@@ -25,7 +34,7 @@ export function Navbar() {
               Settings
             </Link>
             <div className="border-l border-slate-200 pl-8 flex items-center gap-4">
-              <span className="text-sm text-gray-600">{user?.signInUserSession?.idToken?.payload?.email}</span>
+              <span className="text-sm text-gray-600">{email}</span>
               <button
                 onClick={() => signOut()}
                 className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
@@ -65,7 +74,7 @@ export function Navbar() {
                 Settings
               </Link>
               <div className="border-t border-slate-200 pt-4">
-                <p className="text-sm text-gray-600 mb-3">{user?.signInUserSession?.idToken?.payload?.email}</p>
+                <p className="text-sm text-gray-600 mb-3">{email}</p>
                 <button
                   onClick={() => {
                     signOut();
