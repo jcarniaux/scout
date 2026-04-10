@@ -1,16 +1,27 @@
-name: Deploy Backend
+name: Deploy
 
 on:
   push:
     branches: [main]
     paths:
+      - "terraform/**"
       - "backend/**"
   workflow_dispatch:
+    inputs:
+      action:
+        description: "Terraform action"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
 
-# Serialize with deploy-infra — both touch Lambda, so only one can run at a time.
-# cancel-in-progress: false ensures the queued run still executes after the current one finishes.
+# Only one deploy can run at a time. cancel-in-progress: false means a
+# second push queues instead of cancelling, so no deploy is ever skipped.
 concurrency:
-  group: scout-lambda-deploy
+  group: scout-deploy
   cancel-in-progress: false
 
 permissions:
@@ -20,10 +31,116 @@ permissions:
 env:
   AWS_REGION: us-east-1
   PYTHON_VERSION: "3.12"
+  TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+
+# ─── Job graph ────────────────────────────────────────────────────────────────
+#
+#   terraform ──┐
+#               ├──▶ backend-deploy
+#   backend-test┘
+#
+# terraform and backend-test run in parallel.
+# backend-deploy only starts when both succeed AND we're not on a plan/destroy run.
 
 jobs:
-  test:
-    name: Lint & Test
+  # ── 1. Infrastructure ────────────────────────────────────────────────────────
+  terraform:
+    name: Terraform ${{ github.event.inputs.action || 'apply' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+
+    outputs:
+      api_url: ${{ steps.outputs.outputs.api_url }}
+      user_pool_id: ${{ steps.outputs.outputs.user_pool_id }}
+      user_pool_client_id: ${{ steps.outputs.outputs.user_pool_client_id }}
+      frontend_bucket: ${{ steps.outputs.outputs.frontend_bucket }}
+      cloudfront_id: ${{ steps.outputs.outputs.cloudfront_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          set -o pipefail
+          terraform plan \
+            -out=tfplan \
+            -detailed-exitcode \
+            -no-color \
+            2>&1 | tee plan-output.txt
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+        # Exit codes: 0 = no changes, 1 = error, 2 = changes present
+        # set -o pipefail propagates terraform's exit code through the pipe.
+        # Codes 0 and 2 are both valid (plan file produced); 1 is a hard failure.
+        continue-on-error: true
+
+      - name: Check Plan Result
+        run: |
+          code="${{ steps.plan.outputs.exit_code }}"
+          if [[ "$code" == "1" ]]; then
+            echo "terraform plan failed — aborting"
+            exit 1
+          fi
+          echo "Plan exit code: $code (0=no-changes, 2=changes-pending)"
+
+      - name: Upload Plan
+        if: steps.plan.outputs.exit_code != '1' && github.event.inputs.action != 'destroy'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: terraform/tfplan
+
+      - name: Terraform Apply
+        if: >
+          steps.plan.outputs.exit_code != '1' &&
+          (
+            (github.event.inputs.action == 'apply') ||
+            (github.event_name == 'push' && github.ref == 'refs/heads/main')
+          )
+        run: terraform apply -auto-approve tfplan
+
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        run: terraform destroy -auto-approve
+
+      - name: Export Outputs
+        if: >
+          (github.event.inputs.action == 'apply') ||
+          (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        id: outputs
+        run: |
+          echo "api_url=$(terraform output -raw api_gateway_url)" >> "$GITHUB_OUTPUT"
+          echo "user_pool_id=$(terraform output -raw cognito_user_pool_id)" >> "$GITHUB_OUTPUT"
+          echo "user_pool_client_id=$(terraform output -raw cognito_user_pool_client_id)" >> "$GITHUB_OUTPUT"
+          echo "frontend_bucket=$(terraform output -raw frontend_bucket_name)" >> "$GITHUB_OUTPUT"
+          echo "cloudfront_id=$(terraform output -raw cloudfront_distribution_id)" >> "$GITHUB_OUTPUT"
+
+  # ── 2. Backend Tests (parallel with terraform) ───────────────────────────────
+  backend-test:
+    name: Lint & Test Backend
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -47,7 +164,7 @@ jobs:
       - name: Lint
         run: ruff check lambdas/
 
-      - name: Type check imports
+      - name: Syntax check
         run: |
           python - <<'EOF'
           import pathlib, sys
@@ -65,11 +182,16 @@ jobs:
           print('All files pass syntax check')
           EOF
 
-  build-and-deploy:
+  # ── 3. Backend Deploy (needs terraform + tests) ───────────────────────────────
+  backend-deploy:
     name: Build & Deploy Lambdas
-    needs: test
+    needs: [terraform, backend-test]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    # Skip on plan-only or destroy runs — there's nothing to deploy.
+    if: >
+      github.ref == 'refs/heads/main' &&
+      github.event.inputs.action != 'plan' &&
+      github.event.inputs.action != 'destroy'
     defaults:
       run:
         working-directory: backend
@@ -217,6 +339,6 @@ jobs:
 
       - name: Summary
         run: |
-          echo "## Backend Deployment Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Deployment Complete" >> "$GITHUB_STEP_SUMMARY"
           echo "- Layer: \`${{ steps.layer.outputs.layer_arn }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Packages: crawlers, enrichment, api, reports" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Packages: crawlers, enrichment, api, reports, purge" >> "$GITHUB_STEP_SUMMARY"
