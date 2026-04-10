@@ -140,9 +140,11 @@ jobs:
               --function-name "$fn" \
               --zip-file fileb://build/crawlers.zip \
               --publish > /dev/null
+            aws lambda wait function-updated --function-name "$fn"
             aws lambda update-function-configuration \
               --function-name "$fn" \
               --layers "${{ steps.layer.outputs.layer_arn }}" > /dev/null
+            aws lambda wait function-updated --function-name "$fn"
             echo "  ✓ $fn deployed"
           done
 
@@ -152,9 +154,11 @@ jobs:
             --function-name scout-enrichment \
             --zip-file fileb://build/enrichment.zip \
             --publish > /dev/null
+          aws lambda wait function-updated --function-name scout-enrichment
           aws lambda update-function-configuration \
             --function-name scout-enrichment \
             --layers "${{ steps.layer.outputs.layer_arn }}" > /dev/null
+          aws lambda wait function-updated --function-name scout-enrichment
           echo "✓ scout-enrichment deployed"
 
       - name: Deploy API Lambdas
@@ -170,9 +174,11 @@ jobs:
               --function-name "$fn" \
               --zip-file fileb://build/api.zip \
               --publish > /dev/null
+            aws lambda wait function-updated --function-name "$fn"
             aws lambda update-function-configuration \
               --function-name "$fn" \
               --layers "${{ steps.layer.outputs.layer_arn }}" > /dev/null
+            aws lambda wait function-updated --function-name "$fn"
             echo "  ✓ $fn deployed"
           done
 
@@ -188,9 +194,11 @@ jobs:
               --function-name "$fn" \
               --zip-file fileb://build/reports.zip \
               --publish > /dev/null
+            aws lambda wait function-updated --function-name "$fn"
             aws lambda update-function-configuration \
               --function-name "$fn" \
               --layers "${{ steps.layer.outputs.layer_arn }}" > /dev/null
+            aws lambda wait function-updated --function-name "$fn"
             echo "  ✓ $fn deployed"
           done
 
@@ -200,6 +208,7 @@ jobs:
             --function-name scout-purge \
             --zip-file fileb://build/crawlers.zip \
             --publish > /dev/null
+          aws lambda wait function-updated --function-name scout-purge
           echo "✓ scout-purge deployed"
 
       - name: Summary
