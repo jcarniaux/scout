@@ -91,19 +91,39 @@ jobs:
       - name: Build dependency layer
         run: |
           mkdir -p build/layer/python
-          pip install -r requirements.txt -t build/layer/python --quiet
-          cd build/layer && zip -r ../dependencies-layer.zip python/ -x "*__pycache__*"
+          # Install only runtime deps (no dev tools) and strip bytecode to keep size down
+          pip install -r requirements.txt \
+            -t build/layer/python \
+            --quiet \
+            --no-compile
+          # Remove test dirs, dist-info, and __pycache__ to trim the zip
+          find build/layer/python -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
+          find build/layer/python -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+          find build/layer/python -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
+          cd build/layer && zip -r ../dependencies-layer.zip python/ -x "*.pyc"
+          echo "Layer zip size: $(du -sh ../dependencies-layer.zip | cut -f1)"
 
-      - name: Publish Lambda layer
+      - name: Publish Lambda layer via S3
         id: layer
         run: |
+          # Lambda direct upload cap is 70 MB — use S3 to avoid RequestEntityTooLargeException
+          S3_KEY="lambda-layers/scout-dependencies-$(date +%s).zip"
+          aws s3 cp build/dependencies-layer.zip \
+            s3://${{ secrets.S3_BUCKET_NAME }}/${S3_KEY} \
+            --no-progress
+
           LAYER_ARN=$(aws lambda publish-layer-version \
             --layer-name scout-dependencies \
-            --zip-file fileb://build/dependencies-layer.zip \
+            --content S3Bucket=${{ secrets.S3_BUCKET_NAME }},S3Key=${S3_KEY} \
             --compatible-runtimes python3.12 \
             --query 'LayerVersionArn' \
             --output text)
+
+          # Clean up the layer zip from S3 — it's only needed during publish
+          aws s3 rm s3://${{ secrets.S3_BUCKET_NAME }}/${S3_KEY}
+
           echo "layer_arn=$LAYER_ARN" >> "$GITHUB_OUTPUT"
+          echo "Published layer: $LAYER_ARN"
 
       - name: Deploy crawler Lambdas
         run: |
