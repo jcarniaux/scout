@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { JobFilters } from '@/types';
+import { JobFilters, DateRange, ApplicationStatus } from '@/types';
 import { useJobs } from '@/hooks/useJobs';
 import { FilterBar } from '@/components/FilterBar';
 import { JobList } from '@/components/JobList';
@@ -15,11 +15,11 @@ export function Dashboard() {
   // Parse filters from URL
   const filters: JobFilters = useMemo(() => {
     return {
-      dateRange: (searchParams.get('dateRange') as any) || undefined,
+      dateRange: (searchParams.get('dateRange') as DateRange) || undefined,
       minRating: searchParams.get('minRating') ? parseFloat(searchParams.get('minRating')!) : undefined,
-      status: (searchParams.get('status') as any) || undefined,
+      status: (searchParams.get('status') as ApplicationStatus) || undefined,
       search: searchParams.get('search') || undefined,
-      sort: (searchParams.get('sort') as any) || 'date',
+      sort: (searchParams.get('sort') as JobFilters['sort']) || 'date',
     };
   }, [searchParams]);
 

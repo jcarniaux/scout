@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { DateRange, JobFilters, ApplicationStatus } from '@/types';
 import { X } from 'lucide-react';
 
@@ -9,9 +8,7 @@ interface FilterBarProps {
 }
 
 export function FilterBar({ filters, onFiltersChange, activeFilterCount }: FilterBarProps) {
-  const [expanded, setExpanded] = useState(true);
-
-  const updateFilter = (key: keyof JobFilters, value: any) => {
+  const updateFilter = (key: keyof JobFilters, value: JobFilters[keyof JobFilters]) => {
     onFiltersChange({ ...filters, [key]: value });
   };
 
