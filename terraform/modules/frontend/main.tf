@@ -5,6 +5,22 @@ resource "aws_s3_bucket" "frontend" {
   tags = {
     Name = "${var.project_name}-frontend"
   }
+
+  lifecycle {
+    # This bucket was created with AWS provider v3/v4 which managed ACL grants,
+    # SSE configuration, and versioning as inline blocks. Provider v5 extracts
+    # these into separate resources. Ignoring them prevents Terraform from
+    # scheduling a replacement every time it detects drift on the legacy state.
+    ignore_changes = [
+      grant,
+      server_side_encryption_configuration,
+      versioning,
+    ]
+
+    # Hard safety net: prevent accidental deletion of the live frontend bucket.
+    # To intentionally destroy, remove this flag first.
+    prevent_destroy = true
+  }
 }
 
 # Block all public access
@@ -20,6 +36,11 @@ resource "aws_s3_bucket_public_access_block" "frontend" {
 # Bucket policy for CloudFront OAC
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
+
+  # Must wait for public access block to be applied before attaching a policy.
+  # AWS rejects bucket policies on buckets where block_public_policy is being
+  # set in the same operation.
+  depends_on = [aws_s3_bucket_public_access_block.frontend]
 
   policy = jsonencode({
     Version = "2012-10-17"
