@@ -85,29 +85,25 @@ jobs:
       - name: Terraform Plan
         id: plan
         run: |
-          set -o pipefail
+          # GitHub runners use `bash -e` by default, which means the script exits
+          # immediately if any command fails — before we can capture $?.
+          # Disable errexit here so we can capture terraform's exit code ourselves
+          # via PIPESTATUS[0], which gives the exit code of the first command in
+          # the pipe (terraform), not the second (tee).
+          set +e
           terraform plan \
             -out=tfplan \
             -detailed-exitcode \
             -no-color \
             2>&1 | tee plan-output.txt
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-        # Exit codes: 0 = no changes, 1 = error, 2 = changes present
-        # set -o pipefail propagates terraform's exit code through the pipe.
-        # Codes 0 and 2 are both valid (plan file produced); 1 is a hard failure.
-        continue-on-error: true
-
-      - name: Check Plan Result
-        run: |
-          code="${{ steps.plan.outputs.exit_code }}"
-          if [[ "$code" == "1" ]]; then
-            echo "terraform plan failed — aborting"
-            exit 1
-          fi
-          echo "Plan exit code: $code (0=no-changes, 2=changes-pending)"
+          TF_EXIT=${PIPESTATUS[0]}
+          echo "exit_code=$TF_EXIT" >> "$GITHUB_OUTPUT"
+          # 0 = no changes, 2 = changes present — both produce a valid plan file.
+          # 1 = error — fail the step so downstream steps never attempt to apply.
+          [[ "$TF_EXIT" == "1" ]] && exit 1 || exit 0
 
       - name: Upload Plan
-        if: steps.plan.outputs.exit_code != '1' && github.event.inputs.action != 'destroy'
+        if: github.event.inputs.action != 'destroy'
         uses: actions/upload-artifact@v4
         with:
           name: tfplan
@@ -115,11 +111,8 @@ jobs:
 
       - name: Terraform Apply
         if: >
-          steps.plan.outputs.exit_code != '1' &&
-          (
-            (github.event.inputs.action == 'apply') ||
-            (github.event_name == 'push' && github.ref == 'refs/heads/main')
-          )
+          (github.event.inputs.action == 'apply') ||
+          (github.event_name == 'push' && github.ref == 'refs/heads/main')
         run: terraform apply -auto-approve tfplan
 
       - name: Terraform Destroy
