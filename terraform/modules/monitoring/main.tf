@@ -7,8 +7,12 @@ resource "aws_sns_topic" "alerts" {
   }
 }
 
-# SNS Email subscription
+# SNS Email subscription — only created when alert_email is provided.
+# Without this guard, Terraform passes an empty string to SNS and fails
+# with "InvalidParameter: Invalid parameter: Endpoint".
 resource "aws_sns_topic_subscription" "alerts_email" {
+  count = var.alert_email != "" ? 1 : 0
+
   topic_arn = aws_sns_topic.alerts.arn
   protocol  = "email"
   endpoint  = var.alert_email
