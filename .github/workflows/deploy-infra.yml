@@ -17,6 +17,12 @@ on:
           - apply
           - destroy
 
+# Serialize with deploy-backend — both touch Lambda, so only one can run at a time.
+# cancel-in-progress: false ensures the queued run still executes after the current one finishes.
+concurrency:
+  group: scout-lambda-deploy
+  cancel-in-progress: false
+
 permissions:
   id-token: write
   contents: read
