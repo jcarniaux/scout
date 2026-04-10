@@ -6,8 +6,7 @@ Triggered by EventBridge on a schedule (daily).
 import logging
 import os
 import time
-from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 from shared.db import DynamoDBHelper
 

@@ -4,8 +4,7 @@ GET /jobs and GET /jobs/{jobId} API handlers.
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Tuple, List
-from decimal import Decimal
+from typing import Dict, Any, Optional, List
 
 from shared.db import DynamoDBHelper
 from shared.response import success_response, error_response, not_found_response, unauthorized_response

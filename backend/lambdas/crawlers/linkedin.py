@@ -6,7 +6,7 @@ import json
 import os
 import logging
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 import boto3
 from jobspy import scrape_jobs

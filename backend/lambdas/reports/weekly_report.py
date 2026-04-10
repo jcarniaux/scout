@@ -6,7 +6,7 @@ Triggered by EventBridge on a schedule (weekly).
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 import boto3
 

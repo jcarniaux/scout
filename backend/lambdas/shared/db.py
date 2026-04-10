@@ -4,7 +4,6 @@ DynamoDB helper class for Scout backend.
 import boto3
 import logging
 from typing import Dict, Any, List, Optional, Tuple
-from decimal import Decimal
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)

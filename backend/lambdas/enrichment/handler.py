@@ -7,15 +7,13 @@ import json
 import logging
 import os
 import re
-import time
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 
-import boto3
 import requests
 
 from shared.db import DynamoDBHelper
-from shared.models import dynamo_serialize, dynamo_deserialize
+from shared.models import dynamo_serialize
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)

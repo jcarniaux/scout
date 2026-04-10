@@ -305,7 +305,7 @@ def daily_report_email(jobs: List[Dict[str, Any]], date: str) -> str:
         body = f'<p>Found <strong>{len(jobs)} new job opportunities</strong> in the last 24 hours:</p>\n'
         body += jobs_table_html(jobs)
 
-    footer = f"""
+    footer = """
     <p><a href="https://scout.carniaux.io" class="cta-button">View All Jobs</a></p>
     <p>Scout is your personal job aggregation platform. Check back daily for new opportunities in your field.</p>
     """
@@ -330,7 +330,7 @@ def weekly_report_email(status_groups: Dict[str, List[Dict[str, Any]]], new_jobs
     if new_jobs_count > 0:
         body += f'<p style="margin-top: 20px;"><strong>{new_jobs_count} new job postings</strong> were added this week.</p>'
 
-    footer = f"""
+    footer = """
     <p><a href="https://scout.carniaux.io" class="cta-button">View Your Pipeline</a></p>
     <p>Keep pushing towards your goals. You\'ve got this!</p>
     """
