@@ -36,7 +36,7 @@ resource "aws_route53_record" "acm_validation" {
 
 # Wait for ACM certificate validation
 resource "aws_acm_certificate_validation" "main" {
-  certificate_arn           = aws_acm_certificate.main.arn
+  certificate_arn = aws_acm_certificate.main.arn
   timeouts {
     create = "5m"
   }
@@ -56,27 +56,27 @@ module "auth" {
 module "data" {
   source = "./modules/data"
 
-  project_name        = var.project_name
-  environment         = var.environment
-  job_retention_days  = var.job_retention_days
+  project_name       = var.project_name
+  environment        = var.environment
+  job_retention_days = var.job_retention_days
 }
 
 # API Gateway Module
 module "api" {
   source = "./modules/api"
 
-  project_name              = var.project_name
-  environment               = var.environment
-  aws_region                = var.aws_region
-  cognito_user_pool_arn     = module.auth.cognito_user_pool_arn
-  dynamodb_jobs_table_name  = module.data.dynamodb_jobs_table_name
-  dynamodb_jobs_table_arn   = module.data.dynamodb_jobs_table_arn
+  project_name                    = var.project_name
+  environment                     = var.environment
+  aws_region                      = var.aws_region
+  cognito_user_pool_arn           = module.auth.cognito_user_pool_arn
+  dynamodb_jobs_table_name        = module.data.dynamodb_jobs_table_name
+  dynamodb_jobs_table_arn         = module.data.dynamodb_jobs_table_arn
   dynamodb_user_status_table_name = module.data.dynamodb_user_status_table_name
   dynamodb_user_status_table_arn  = module.data.dynamodb_user_status_table_arn
-  dynamodb_users_table_name = module.data.dynamodb_users_table_name
-  dynamodb_users_table_arn  = module.data.dynamodb_users_table_arn
-  domain_name               = var.domain_name
-  subdomain                 = var.subdomain
+  dynamodb_users_table_name       = module.data.dynamodb_users_table_name
+  dynamodb_users_table_arn        = module.data.dynamodb_users_table_arn
+  domain_name                     = var.domain_name
+  subdomain                       = var.subdomain
 
   depends_on = [
     module.auth,
@@ -88,14 +88,14 @@ module "api" {
 module "crawl" {
   source = "./modules/crawl"
 
-  project_name        = var.project_name
-  environment         = var.environment
-  aws_region          = var.aws_region
-  crawl_schedule      = var.crawl_schedule
-  dynamodb_jobs_table_name = module.data.dynamodb_jobs_table_name
-  dynamodb_jobs_table_arn  = module.data.dynamodb_jobs_table_arn
-  dynamodb_user_status_table_name = module.data.dynamodb_user_status_table_name
-  dynamodb_user_status_table_arn  = module.data.dynamodb_user_status_table_arn
+  project_name                        = var.project_name
+  environment                         = var.environment
+  aws_region                          = var.aws_region
+  crawl_schedule                      = var.crawl_schedule
+  dynamodb_jobs_table_name            = module.data.dynamodb_jobs_table_name
+  dynamodb_jobs_table_arn             = module.data.dynamodb_jobs_table_arn
+  dynamodb_user_status_table_name     = module.data.dynamodb_user_status_table_name
+  dynamodb_user_status_table_arn      = module.data.dynamodb_user_status_table_arn
   dynamodb_glassdoor_cache_table_name = module.data.dynamodb_glassdoor_cache_table_name
   dynamodb_glassdoor_cache_table_arn  = module.data.dynamodb_glassdoor_cache_table_arn
 
@@ -106,14 +106,14 @@ module "crawl" {
 module "email" {
   source = "./modules/email"
 
-  project_name        = var.project_name
-  environment         = var.environment
-  aws_region          = var.aws_region
-  ses_verified_domain = var.ses_verified_domain
-  daily_report_schedule  = var.daily_report_schedule
-  weekly_report_schedule = var.weekly_report_schedule
-  dynamodb_jobs_table_name = module.data.dynamodb_jobs_table_name
-  dynamodb_jobs_table_arn  = module.data.dynamodb_jobs_table_arn
+  project_name                    = var.project_name
+  environment                     = var.environment
+  aws_region                      = var.aws_region
+  ses_verified_domain             = var.ses_verified_domain
+  daily_report_schedule           = var.daily_report_schedule
+  weekly_report_schedule          = var.weekly_report_schedule
+  dynamodb_jobs_table_name        = module.data.dynamodb_jobs_table_name
+  dynamodb_jobs_table_arn         = module.data.dynamodb_jobs_table_arn
   dynamodb_users_table_name       = module.data.dynamodb_users_table_name
   dynamodb_users_table_arn        = module.data.dynamodb_users_table_arn
   dynamodb_user_status_table_name = module.data.dynamodb_user_status_table_name

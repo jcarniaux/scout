@@ -1,7 +1,7 @@
 resource "random_string" "cognito_domain_suffix" {
   length  = 8
   special = false
-  upper   = false  # Cognito domains must be lowercase only
+  upper   = false # Cognito domains must be lowercase only
   numeric = true
   lower   = true
 }
@@ -32,10 +32,10 @@ resource "aws_cognito_user_pool" "main" {
 
   # User attribute schema
   schema {
-    name              = "email"
+    name                = "email"
     attribute_data_type = "String"
-    required          = true
-    mutable           = true
+    required            = true
+    mutable             = true
   }
 
   # Email configuration
@@ -46,8 +46,8 @@ resource "aws_cognito_user_pool" "main" {
   # Account recovery settings
   account_recovery_setting {
     recovery_mechanism {
-      name       = "verified_email"
-      priority   = 1
+      name     = "verified_email"
+      priority = 1
     }
   }
 
@@ -64,18 +64,18 @@ resource "aws_cognito_user_pool_domain" "main" {
 
 # Cognito User Pool Client for SPA
 resource "aws_cognito_user_pool_client" "spa" {
-  name                = "${var.project_name}-spa-client"
-  user_pool_id        = aws_cognito_user_pool.main.id
-  generate_secret     = false  # No client secret for SPA
+  name            = "${var.project_name}-spa-client"
+  user_pool_id    = aws_cognito_user_pool.main.id
+  generate_secret = false # No client secret for SPA
   explicit_auth_flows = [
     "ALLOW_USER_SRP_AUTH",
     "ALLOW_REFRESH_TOKEN_AUTH"
   ]
 
   # Token validity
-  access_token_validity  = 1    # hours
-  id_token_validity      = 1    # hours
-  refresh_token_validity = 30   # days
+  access_token_validity  = 1  # hours
+  id_token_validity      = 1  # hours
+  refresh_token_validity = 30 # days
   token_validity_units {
     access_token  = "hours"
     id_token      = "hours"

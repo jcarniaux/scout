@@ -12,7 +12,7 @@ data "archive_file" "lambda_placeholder" {
 resource "aws_sqs_queue" "raw_jobs" {
   name                       = "${var.project_name}-raw-jobs"
   visibility_timeout_seconds = 300
-  message_retention_seconds  = 86400  # 1 day
+  message_retention_seconds  = 86400 # 1 day
 
   tags = {
     Name = "${var.project_name}-raw-jobs"
@@ -52,11 +52,11 @@ resource "aws_secretsmanager_secret" "scraper_keys" {
 resource "aws_secretsmanager_secret_version" "scraper_keys" {
   secret_id = aws_secretsmanager_secret.scraper_keys.id
   secret_string = jsonencode({
-    linkedin_api_key  = "placeholder"
-    indeed_api_key    = "placeholder"
-    glassdoor_api_key = "placeholder"
+    linkedin_api_key     = "placeholder"
+    indeed_api_key       = "placeholder"
+    glassdoor_api_key    = "placeholder"
     ziprecruiter_api_key = "placeholder"
-    dice_api_key      = "placeholder"
+    dice_api_key         = "placeholder"
   })
 }
 
@@ -327,9 +327,9 @@ resource "aws_lambda_function" "enrichment_lambda" {
 
   environment {
     variables = {
-      JOBS_TABLE             = var.dynamodb_jobs_table_name
-      GLASSDOOR_CACHE_TABLE  = var.dynamodb_glassdoor_cache_table_name
-      SECRETS_ARN            = aws_secretsmanager_secret.scraper_keys.arn
+      JOBS_TABLE            = var.dynamodb_jobs_table_name
+      GLASSDOOR_CACHE_TABLE = var.dynamodb_glassdoor_cache_table_name
+      SECRETS_ARN           = aws_secretsmanager_secret.scraper_keys.arn
     }
   }
 
@@ -413,15 +413,15 @@ resource "aws_lambda_function" "purge_lambda" {
 
 # Step Functions State Machine Definition (JSON)
 resource "aws_sfn_state_machine" "crawl" {
-  name       = "${var.project_name}-crawl-state-machine"
-  role_arn   = aws_iam_role.step_functions_role.arn
+  name     = "${var.project_name}-crawl-state-machine"
+  role_arn = aws_iam_role.step_functions_role.arn
   definition = templatefile("${path.module}/state_machine.json", {
-    linkedin_lambda_arn   = aws_lambda_function.crawler_linkedin.arn
-    indeed_lambda_arn     = aws_lambda_function.crawler_indeed.arn
-    glassdoor_lambda_arn  = aws_lambda_function.crawler_glassdoor.arn
+    linkedin_lambda_arn     = aws_lambda_function.crawler_linkedin.arn
+    indeed_lambda_arn       = aws_lambda_function.crawler_indeed.arn
+    glassdoor_lambda_arn    = aws_lambda_function.crawler_glassdoor.arn
     ziprecruiter_lambda_arn = aws_lambda_function.crawler_ziprecruiter.arn
-    dice_lambda_arn       = aws_lambda_function.crawler_dice.arn
-    purge_lambda_arn      = aws_lambda_function.purge_lambda.arn
+    dice_lambda_arn         = aws_lambda_function.crawler_dice.arn
+    purge_lambda_arn        = aws_lambda_function.purge_lambda.arn
   })
 
   tags = {

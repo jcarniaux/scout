@@ -217,23 +217,23 @@ resource "aws_api_gateway_resource" "jobs" {
 }
 
 resource "aws_api_gateway_method" "get_jobs" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.jobs.id
-  http_method      = "GET"
-  authorization    = "COGNITO_USER_POOLS"
-  authorizer_id    = aws_api_gateway_authorizer.cognito.id
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.jobs.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
   request_parameters = {
     "method.request.header.Authorization" = true
   }
 }
 
 resource "aws_api_gateway_integration" "get_jobs" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.jobs.id
-  http_method      = aws_api_gateway_method.get_jobs.http_method
-  type             = "AWS_PROXY"
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.jobs.id
+  http_method             = aws_api_gateway_method.get_jobs.http_method
+  type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri              = aws_lambda_function.get_jobs.invoke_arn
+  uri                     = aws_lambda_function.get_jobs.invoke_arn
 }
 
 # GET /jobs/{jobId}
@@ -244,24 +244,24 @@ resource "aws_api_gateway_resource" "job_detail" {
 }
 
 resource "aws_api_gateway_method" "get_job_detail" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.job_detail.id
-  http_method      = "GET"
-  authorization    = "COGNITO_USER_POOLS"
-  authorizer_id    = aws_api_gateway_authorizer.cognito.id
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.job_detail.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
   request_parameters = {
     "method.request.header.Authorization" = true
-    "method.request.path.jobId"            = true
+    "method.request.path.jobId"           = true
   }
 }
 
 resource "aws_api_gateway_integration" "get_job_detail" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.job_detail.id
-  http_method      = aws_api_gateway_method.get_job_detail.http_method
-  type             = "AWS_PROXY"
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.job_detail.id
+  http_method             = aws_api_gateway_method.get_job_detail.http_method
+  type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri              = aws_lambda_function.get_jobs.invoke_arn
+  uri                     = aws_lambda_function.get_jobs.invoke_arn
 }
 
 # PATCH /jobs/{jobId}/status
@@ -272,24 +272,24 @@ resource "aws_api_gateway_resource" "job_status" {
 }
 
 resource "aws_api_gateway_method" "patch_job_status" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.job_status.id
-  http_method      = "PATCH"
-  authorization    = "COGNITO_USER_POOLS"
-  authorizer_id    = aws_api_gateway_authorizer.cognito.id
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.job_status.id
+  http_method   = "PATCH"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
   request_parameters = {
     "method.request.header.Authorization" = true
-    "method.request.path.jobId"            = true
+    "method.request.path.jobId"           = true
   }
 }
 
 resource "aws_api_gateway_integration" "patch_job_status" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.job_status.id
-  http_method      = aws_api_gateway_method.patch_job_status.http_method
-  type             = "AWS_PROXY"
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.job_status.id
+  http_method             = aws_api_gateway_method.patch_job_status.http_method
+  type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri              = aws_lambda_function.patch_job_status.invoke_arn
+  uri                     = aws_lambda_function.patch_job_status.invoke_arn
 }
 
 # GET /user/settings
@@ -306,59 +306,59 @@ resource "aws_api_gateway_resource" "user_settings" {
 }
 
 resource "aws_api_gateway_method" "get_user_settings" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.user_settings.id
-  http_method      = "GET"
-  authorization    = "COGNITO_USER_POOLS"
-  authorizer_id    = aws_api_gateway_authorizer.cognito.id
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.user_settings.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
   request_parameters = {
     "method.request.header.Authorization" = true
   }
 }
 
 resource "aws_api_gateway_integration" "get_user_settings" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.user_settings.id
-  http_method      = aws_api_gateway_method.get_user_settings.http_method
-  type             = "AWS_PROXY"
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.user_settings.id
+  http_method             = aws_api_gateway_method.get_user_settings.http_method
+  type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri              = aws_lambda_function.get_user_settings.invoke_arn
+  uri                     = aws_lambda_function.get_user_settings.invoke_arn
 }
 
 # PUT /user/settings
 resource "aws_api_gateway_method" "put_user_settings" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.user_settings.id
-  http_method      = "PUT"
-  authorization    = "COGNITO_USER_POOLS"
-  authorizer_id    = aws_api_gateway_authorizer.cognito.id
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.user_settings.id
+  http_method   = "PUT"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
   request_parameters = {
     "method.request.header.Authorization" = true
   }
 }
 
 resource "aws_api_gateway_integration" "put_user_settings" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.user_settings.id
-  http_method      = aws_api_gateway_method.put_user_settings.http_method
-  type             = "AWS_PROXY"
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.user_settings.id
+  http_method             = aws_api_gateway_method.put_user_settings.http_method
+  type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri              = aws_lambda_function.get_user_settings.invoke_arn
+  uri                     = aws_lambda_function.get_user_settings.invoke_arn
 }
 
 # CORS support via OPTIONS methods
 resource "aws_api_gateway_method" "jobs_options" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.jobs.id
-  http_method      = "OPTIONS"
-  authorization    = "NONE"
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.jobs.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
 }
 
 resource "aws_api_gateway_integration" "jobs_options" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.jobs.id
-  http_method      = aws_api_gateway_method.jobs_options.http_method
-  type             = "MOCK"
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.jobs.id
+  http_method = aws_api_gateway_method.jobs_options.http_method
+  type        = "MOCK"
   request_templates = {
     "application/json" = "{\"statusCode\": 200}"
   }
@@ -396,10 +396,10 @@ resource "aws_api_gateway_integration_response" "jobs_options" {
 
 # Add CORS headers to other methods
 resource "aws_api_gateway_method_response" "get_jobs" {
-  rest_api_id      = aws_api_gateway_rest_api.main.id
-  resource_id      = aws_api_gateway_resource.jobs.id
-  http_method      = aws_api_gateway_method.get_jobs.http_method
-  status_code      = "200"
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.jobs.id
+  http_method = aws_api_gateway_method.get_jobs.http_method
+  status_code = "200"
   response_parameters = {
     "method.response.header.Access-Control-Allow-Origin" = true
   }
@@ -428,17 +428,17 @@ resource "aws_api_gateway_stage" "v1" {
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_gateway.arn
     format = jsonencode({
-      requestId      = "$context.requestId"
-      ip             = "$context.identity.sourceIp"
-      requestTime    = "$context.requestTime"
-      httpMethod     = "$context.httpMethod"
-      resourcePath   = "$context.resourcePath"
-      status         = "$context.status"
-      protocol       = "$context.protocol"
-      responseLength = "$context.responseLength"
+      requestId          = "$context.requestId"
+      ip                 = "$context.identity.sourceIp"
+      requestTime        = "$context.requestTime"
+      httpMethod         = "$context.httpMethod"
+      resourcePath       = "$context.resourcePath"
+      status             = "$context.status"
+      protocol           = "$context.protocol"
+      responseLength     = "$context.responseLength"
       integrationLatency = "$context.integration.latency"
-      error          = "$context.error.message"
-      errorType      = "$context.error.messageString"
+      error              = "$context.error.message"
+      errorType          = "$context.error.messageString"
     })
   }
 
