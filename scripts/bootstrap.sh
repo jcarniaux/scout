@@ -132,8 +132,29 @@ else
         --description "Scout GitHub Actions deployment role" > /dev/null
 fi
 
-# Attach policies for deployment
-POLICIES=(
+# Attach a single consolidated inline policy instead of multiple managed policies.
+# AWS limits roles to 10 attached managed policies; using one inline policy avoids
+# that limit entirely and keeps permissions auditable in a single place.
+#
+# The policy document lives at scripts/github-actions-policy.json.
+# Idempotent: put-role-policy overwrites silently if the policy already exists.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+POLICY_FILE="$SCRIPT_DIR/github-actions-policy.json"
+
+if [[ ! -f "$POLICY_FILE" ]]; then
+    echo "ERROR: $POLICY_FILE not found — cannot configure role permissions" >&2
+    exit 1
+fi
+
+aws iam put-role-policy \
+    --role-name "$ROLE_NAME" \
+    --policy-name "scout-deploy-policy" \
+    --policy-document "file://$POLICY_FILE"
+echo "  ✓ Inline policy scout-deploy-policy attached"
+
+# Detach any legacy managed policies left over from previous bootstrap runs.
+# Safe to run even if none are attached.
+LEGACY_POLICIES=(
     "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
     "arn:aws:iam::aws:policy/AmazonS3FullAccess"
     "arn:aws:iam::aws:policy/AWSLambda_FullAccess"
@@ -151,11 +172,10 @@ POLICIES=(
     "arn:aws:iam::aws:policy/CloudWatchFullAccessV2"
     "arn:aws:iam::aws:policy/AmazonSNSFullAccess"
 )
-
-for policy in "${POLICIES[@]}"; do
-    aws iam attach-role-policy \
+for policy in "${LEGACY_POLICIES[@]}"; do
+    aws iam detach-role-policy \
         --role-name "$ROLE_NAME" \
-        --policy-arn "$policy" 2>/dev/null || true
+        --policy-arn "$policy" 2>/dev/null && echo "  ✓ Detached legacy $policy" || true
 done
 
 ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
