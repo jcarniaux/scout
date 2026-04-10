@@ -9,7 +9,5 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
-  define: {
-    'import.meta.env.VITE_': JSON.stringify(process.env.VITE_),
-  },
+  // VITE_* env vars are automatically exposed via import.meta.env — no define needed
 })
