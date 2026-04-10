@@ -60,13 +60,29 @@ jobs:
       - name: Terraform Plan
         id: plan
         run: |
+          set -o pipefail
           terraform plan \
             -out=tfplan \
+            -detailed-exitcode \
             -no-color \
             2>&1 | tee plan-output.txt
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+        # Exit codes: 0 = no changes, 1 = error, 2 = changes present
+        # set -o pipefail propagates terraform's exit code through the pipe.
+        # We treat codes 0 and 2 as success (plan produced a valid output file).
+        continue-on-error: true
+
+      - name: Check Plan Result
+        run: |
+          code="${{ steps.plan.outputs.exit_code }}"
+          if [[ "$code" == "1" ]]; then
+            echo "terraform plan failed — aborting"
+            exit 1
+          fi
+          echo "Plan exit code: $code (0=no-changes, 2=changes-pending)"
 
       - name: Upload Plan
-        if: github.event.inputs.action != 'destroy'
+        if: steps.plan.outputs.exit_code != '1' && github.event.inputs.action != 'destroy'
         uses: actions/upload-artifact@v4
         with:
           name: tfplan
@@ -74,8 +90,11 @@ jobs:
 
       - name: Terraform Apply
         if: >
-          (github.event.inputs.action == 'apply') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/main')
+          steps.plan.outputs.exit_code != '1' &&
+          (
+            (github.event.inputs.action == 'apply') ||
+            (github.event_name == 'push' && github.ref == 'refs/heads/main')
+          )
         run: terraform apply -auto-approve tfplan
 
       - name: Terraform Destroy
