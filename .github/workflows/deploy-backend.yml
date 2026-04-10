@@ -125,6 +125,7 @@ jobs:
           )
           for fn in "${FUNCTIONS[@]}"; do
             echo "Deploying $fn..."
+            aws lambda wait function-updated --function-name "$fn"
             aws lambda update-function-code \
               --function-name "$fn" \
               --zip-file fileb://build/crawlers.zip \
@@ -139,6 +140,7 @@ jobs:
 
       - name: Deploy enrichment Lambda
         run: |
+          aws lambda wait function-updated --function-name scout-enrichment
           aws lambda update-function-code \
             --function-name scout-enrichment \
             --zip-file fileb://build/enrichment.zip \
@@ -159,6 +161,7 @@ jobs:
           )
           for fn in "${FUNCTIONS[@]}"; do
             echo "Deploying $fn..."
+            aws lambda wait function-updated --function-name "$fn"
             aws lambda update-function-code \
               --function-name "$fn" \
               --zip-file fileb://build/api.zip \
@@ -179,6 +182,7 @@ jobs:
           )
           for fn in "${FUNCTIONS[@]}"; do
             echo "Deploying $fn..."
+            aws lambda wait function-updated --function-name "$fn"
             aws lambda update-function-code \
               --function-name "$fn" \
               --zip-file fileb://build/reports.zip \
@@ -193,6 +197,7 @@ jobs:
 
       - name: Deploy purge Lambda
         run: |
+          aws lambda wait function-updated --function-name scout-purge
           aws lambda update-function-code \
             --function-name scout-purge \
             --zip-file fileb://build/crawlers.zip \
