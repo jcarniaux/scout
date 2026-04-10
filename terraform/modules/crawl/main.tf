@@ -11,7 +11,7 @@ data "archive_file" "lambda_placeholder" {
 # SQS Queue for raw jobs
 resource "aws_sqs_queue" "raw_jobs" {
   name                       = "${var.project_name}-raw-jobs"
-  visibility_timeout_seconds = 300
+  visibility_timeout_seconds = 900
   message_retention_seconds  = 86400 # 1 day
 
   tags = {
@@ -154,7 +154,7 @@ resource "aws_lambda_function" "crawler_linkedin" {
   role          = aws_iam_role.crawler_role.arn
   handler       = "crawlers.linkedin.handler"
   runtime       = "python3.12"
-  timeout       = 300
+  timeout       = 900
   memory_size   = 512
 
   environment {
@@ -175,7 +175,7 @@ resource "aws_lambda_function" "crawler_indeed" {
   role          = aws_iam_role.crawler_role.arn
   handler       = "crawlers.indeed.handler"
   runtime       = "python3.12"
-  timeout       = 300
+  timeout       = 900
   memory_size   = 512
 
   environment {
@@ -196,7 +196,7 @@ resource "aws_lambda_function" "crawler_glassdoor" {
   role          = aws_iam_role.crawler_role.arn
   handler       = "crawlers.glassdoor.handler"
   runtime       = "python3.12"
-  timeout       = 300
+  timeout       = 900
   memory_size   = 512
 
   environment {
@@ -217,7 +217,7 @@ resource "aws_lambda_function" "crawler_ziprecruiter" {
   role          = aws_iam_role.crawler_role.arn
   handler       = "crawlers.ziprecruiter.handler"
   runtime       = "python3.12"
-  timeout       = 300
+  timeout       = 900
   memory_size   = 512
 
   environment {
@@ -238,7 +238,7 @@ resource "aws_lambda_function" "crawler_dice" {
   role          = aws_iam_role.crawler_role.arn
   handler       = "crawlers.dice.handler"
   runtime       = "python3.12"
-  timeout       = 300
+  timeout       = 900
   memory_size   = 512
 
   environment {

@@ -13,10 +13,10 @@
               "Resource": "${linkedin_lambda_arn}",
               "Retry": [
                 {
-                  "ErrorEquals": ["States.TaskFailed"],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 2,
-                  "BackoffRate": 2.0
+                  "ErrorEquals": ["States.TaskFailed", "States.Timeout"],
+                  "IntervalSeconds": 60,
+                  "MaxAttempts": 1,
+                  "BackoffRate": 1.0
                 }
               ],
               "Catch": [
@@ -45,10 +45,10 @@
               "Resource": "${indeed_lambda_arn}",
               "Retry": [
                 {
-                  "ErrorEquals": ["States.TaskFailed"],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 2,
-                  "BackoffRate": 2.0
+                  "ErrorEquals": ["States.TaskFailed", "States.Timeout"],
+                  "IntervalSeconds": 60,
+                  "MaxAttempts": 1,
+                  "BackoffRate": 1.0
                 }
               ],
               "Catch": [
@@ -77,10 +77,10 @@
               "Resource": "${glassdoor_lambda_arn}",
               "Retry": [
                 {
-                  "ErrorEquals": ["States.TaskFailed"],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 2,
-                  "BackoffRate": 2.0
+                  "ErrorEquals": ["States.TaskFailed", "States.Timeout"],
+                  "IntervalSeconds": 60,
+                  "MaxAttempts": 1,
+                  "BackoffRate": 1.0
                 }
               ],
               "Catch": [
@@ -109,10 +109,10 @@
               "Resource": "${ziprecruiter_lambda_arn}",
               "Retry": [
                 {
-                  "ErrorEquals": ["States.TaskFailed"],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 2,
-                  "BackoffRate": 2.0
+                  "ErrorEquals": ["States.TaskFailed", "States.Timeout"],
+                  "IntervalSeconds": 60,
+                  "MaxAttempts": 1,
+                  "BackoffRate": 1.0
                 }
               ],
               "Catch": [
@@ -141,10 +141,10 @@
               "Resource": "${dice_lambda_arn}",
               "Retry": [
                 {
-                  "ErrorEquals": ["States.TaskFailed"],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 2,
-                  "BackoffRate": 2.0
+                  "ErrorEquals": ["States.TaskFailed", "States.Timeout"],
+                  "IntervalSeconds": 60,
+                  "MaxAttempts": 1,
+                  "BackoffRate": 1.0
                 }
               ],
               "Catch": [
@@ -174,9 +174,9 @@
       "Retry": [
         {
           "ErrorEquals": ["States.TaskFailed"],
-          "IntervalSeconds": 1,
+          "IntervalSeconds": 10,
           "MaxAttempts": 1,
-          "BackoffRate": 2.0
+          "BackoffRate": 1.0
         }
       ],
       "Catch": [
