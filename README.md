@@ -45,8 +45,7 @@ scout/
 │   └── package.json
 │
 ├── .github/workflows/
-│   ├── deploy-infra.yml    # Terraform plan / apply on push to main
-│   ├── deploy-backend.yml  # Build + deploy Lambdas on push to main
+│   ├── deploy.yml          # Terraform + Lambda deploy (sequenced: infra → backend)
 │   └── deploy-frontend.yml # Build React + sync to S3 + CloudFront invalidation
 │
 └── scripts/
