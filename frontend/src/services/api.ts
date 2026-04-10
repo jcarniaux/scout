@@ -23,7 +23,7 @@ async function authFetch(path: string, options: RequestInit = {}) {
 }
 
 export const api = {
-  getJobs: (filters: JobFilters, page = 1, pageSize = 20): Promise<PaginatedResponse<Job>> => {
+  getJobs: async (filters: JobFilters, page = 1, pageSize = 20): Promise<PaginatedResponse<Job>> => {
     const params = new URLSearchParams();
     if (filters.dateRange) params.set('dateRange', filters.dateRange);
     if (filters.minRating) params.set('minRating', String(filters.minRating));
@@ -32,7 +32,15 @@ export const api = {
     if (filters.sort) params.set('sort', filters.sort);
     params.set('page', String(page));
     params.set('pageSize', String(pageSize));
-    return authFetch(`/jobs?${params}`);
+    // API returns {jobs, total, page, pageSize, hasMore} — map to PaginatedResponse shape
+    const raw = await authFetch(`/jobs?${params}`);
+    return {
+      items: raw.jobs ?? [],
+      totalCount: raw.total ?? 0,
+      page: raw.page ?? page,
+      pageSize: raw.pageSize ?? pageSize,
+      hasMore: raw.hasMore ?? false,
+    };
   },
 
   getJob: (jobId: string): Promise<Job> => authFetch(`/jobs/${jobId}`),

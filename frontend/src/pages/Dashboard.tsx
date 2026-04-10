@@ -53,9 +53,9 @@ export function Dashboard() {
                 </span>
               )}
             </h1>
-            {data && (
+            {data && data.items.length > 0 && (
               <p className="text-sm text-gray-600 mt-1">
-                Last updated {formatDistanceToNow(new Date(data.items[0]?.createdAt || Date.now()), {
+                Last updated {formatDistanceToNow(new Date(data.items[0].createdAt), {
                   addSuffix: true,
                 })}
               </p>
