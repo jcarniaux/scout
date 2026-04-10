@@ -402,6 +402,7 @@ resource "aws_lambda_function" "purge_lambda" {
 
   environment {
     variables = {
+      JOBS_TABLE        = var.dynamodb_jobs_table_name
       USER_STATUS_TABLE = var.dynamodb_user_status_table_name
     }
   }

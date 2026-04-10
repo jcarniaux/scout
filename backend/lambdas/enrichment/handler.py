@@ -23,19 +23,25 @@ requests_session = requests.Session()
 requests_session.timeout = 5
 
 
-def compute_job_hash(title: str, company: str, location: str) -> str:
+def compute_job_hash(title: str, company: str, location: str, job_url: str = "") -> str:
     """
     Compute a hash for job deduplication.
+    Uses job_url as primary key when company is unknown (common with LinkedIn scrapes).
 
     Args:
         title: Job title
-        company: Company name
+        company: Company name (may be "Unknown")
         location: Location
+        job_url: Job URL (used as tiebreaker when company is missing)
 
     Returns:
         SHA256 hash hex
     """
-    key = f"{title.lower().strip()}|{company.lower().strip()}|{location.lower().strip()}"
+    if job_url and (not company or company == "Unknown"):
+        # URL is the most reliable dedup key when company data is absent
+        key = job_url.strip()
+    else:
+        key = f"{title.lower().strip()}|{company.lower().strip()}|{location.lower().strip()}"
     return hashlib.sha256(key.encode()).hexdigest()
 
 
@@ -208,15 +214,21 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             location = body.get("location", "").strip()
             source = body.get("source", "unknown").strip()
 
-            if not title or not company:
-                logger.warning(f"Skipping job with missing title or company: {body}")
+            # Only require title + url — company is often missing from LinkedIn scrapes
+            job_url = body.get("job_url", "").strip()
+            if not title or not job_url:
+                logger.warning(f"Skipping job with missing title or url: {body}")
                 total_errors += 1
                 continue
+
+            # Fall back to "Unknown" so the job is still stored and searchable
+            if not company:
+                company = "Unknown"
 
             total_processed += 1
 
             # Compute hash for deduplication
-            job_hash = compute_job_hash(title, company, location)
+            job_hash = compute_job_hash(title, company, location, job_url)
 
             # Build job item for DynamoDB.
             # Key names must match the table schema exactly (case-sensitive):
