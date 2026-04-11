@@ -237,17 +237,25 @@ def list_jobs(
 
         # DateIndex: hash_key=gsi1pk ("JOB"), range_key=postedDate
         # All jobs share gsi1pk="JOB" so we can query the full date range.
-        items, last_key = dynamodb.query(
-            jobs_table,
-            "gsi1pk = :pk AND postedDate >= :start",
-            {":pk": "JOB", ":start": start_date},
-            index_name="DateIndex",
-            limit=offset + page_size + 10,
-            scan_index_forward=False,
-        )
+        # Paginate through the FULL result set so the total count is accurate.
+        # At Scout's scale (hundreds of jobs, not millions) this is fine.
+        all_items: list = []
+        last_key = None
+        while True:
+            items, last_key = dynamodb.query(
+                jobs_table,
+                "gsi1pk = :pk AND postedDate >= :start",
+                {":pk": "JOB", ":start": start_date},
+                index_name="DateIndex",
+                scan_index_forward=False,
+                exclusive_start_key=last_key,
+            )
+            all_items.extend(items)
+            if not last_key:
+                break
 
         # Deserialize, filter, then map to frontend shape
-        jobs = [dynamo_deserialize(item) for item in items]
+        jobs = [dynamo_deserialize(item) for item in all_items]
         filtered_jobs = filter_jobs(
             jobs,
             f"USER#{user_sub}",

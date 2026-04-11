@@ -274,7 +274,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             if rating is not None:
                 job_item["rating"] = rating
 
-            # Store in DynamoDB with conditional put (skip if job+source already exists)
+            # Store in DynamoDB: new jobs get a full put, existing jobs
+            # get their timestamps refreshed so "Last updated" stays current.
             try:
                 dynamodb.put_item(
                     jobs_table,
@@ -286,7 +287,18 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             except Exception as e:
                 if "ConditionalCheckFailedException" in str(e):
                     total_duplicates += 1
-                    logger.debug(f"Duplicate job skipped: {title}")
+                    # Refresh the crawled_at timestamp so the frontend's
+                    # "Last updated" reflects the most recent crawl, not
+                    # the original insertion date.
+                    try:
+                        dynamodb.update_item(
+                            jobs_table,
+                            {"pk": job_item["pk"], "sk": job_item["sk"]},
+                            "SET crawled_at = :ca, created_at = :ca",
+                            {":ca": datetime.utcnow().isoformat()},
+                        )
+                    except Exception as ue:
+                        logger.debug(f"Failed to refresh timestamp for {title}: {ue}")
                 else:
                     raise
 
