@@ -18,8 +18,6 @@ output "crawler_lambda_names" {
   value = [
     aws_lambda_function.crawler_linkedin.function_name,
     aws_lambda_function.crawler_indeed.function_name,
-    aws_lambda_function.crawler_glassdoor.function_name,
-    aws_lambda_function.crawler_ziprecruiter.function_name,
     aws_lambda_function.crawler_dice.function_name
   ]
 }

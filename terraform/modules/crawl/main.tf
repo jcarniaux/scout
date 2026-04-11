@@ -94,8 +94,6 @@ resource "aws_iam_role_policy" "step_functions_lambda_policy" {
       Resource = [
         "${aws_lambda_function.crawler_linkedin.arn}",
         "${aws_lambda_function.crawler_indeed.arn}",
-        "${aws_lambda_function.crawler_glassdoor.arn}",
-        "${aws_lambda_function.crawler_ziprecruiter.arn}",
         "${aws_lambda_function.crawler_dice.arn}",
         "${aws_lambda_function.purge_lambda.arn}"
       ]
@@ -445,12 +443,10 @@ resource "aws_sfn_state_machine" "crawl" {
   name     = "${var.project_name}-crawl-state-machine"
   role_arn = aws_iam_role.step_functions_role.arn
   definition = templatefile("${path.module}/state_machine.json", {
-    linkedin_lambda_arn     = aws_lambda_function.crawler_linkedin.arn
-    indeed_lambda_arn       = aws_lambda_function.crawler_indeed.arn
-    glassdoor_lambda_arn    = aws_lambda_function.crawler_glassdoor.arn
-    ziprecruiter_lambda_arn = aws_lambda_function.crawler_ziprecruiter.arn
-    dice_lambda_arn         = aws_lambda_function.crawler_dice.arn
-    purge_lambda_arn        = aws_lambda_function.purge_lambda.arn
+    linkedin_lambda_arn = aws_lambda_function.crawler_linkedin.arn
+    indeed_lambda_arn   = aws_lambda_function.crawler_indeed.arn
+    dice_lambda_arn     = aws_lambda_function.crawler_dice.arn
+    purge_lambda_arn    = aws_lambda_function.purge_lambda.arn
   })
 
   tags = {

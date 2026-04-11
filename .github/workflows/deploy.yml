@@ -308,8 +308,6 @@ jobs:
           FUNCTIONS=(
             "scout-crawler-linkedin"
             "scout-crawler-indeed"
-            "scout-crawler-glassdoor"
-            "scout-crawler-ziprecruiter"
             "scout-crawler-dice"
             "scout-crawl-diagnose"
           )

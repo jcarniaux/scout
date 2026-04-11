@@ -215,7 +215,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
       {"role": "Cloud Architect"} — use a different test role
       {}                          — test all 4
     """
-    requested_sources = event.get("sources", ["indeed", "glassdoor", "ziprecruiter", "dice"])
+    requested_sources = event.get("sources", ["indeed", "dice"])
     role = event.get("role", TEST_ROLE)
     loc = TEST_LOCATION
 
@@ -239,7 +239,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         "indeed": ("indeed", "indeed"),
     }
 
-    oxylabs_sources = {"glassdoor", "ziprecruiter", "dice"}
+    oxylabs_sources = {"dice"}
 
     source_reports = {}
     for source in requested_sources:
