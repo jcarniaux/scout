@@ -1,40 +1,60 @@
 """
-Dice job crawler using requests + BeautifulSoup.
-Dice is not supported by JobSpy, so we do custom scraping.
-Triggered by EventBridge on a schedule (daily).
-Best-effort: fails gracefully if Dice changes their frontend.
+Dice job crawler using Dice's public search API.
+Triggered by Step Functions as part of the daily crawl pipeline.
+
+Previous approach scraped HTML for __NEXT_DATA__, which broke when Dice
+moved to full client-side rendering. This version uses their public
+/jobs/q-{query}-jobs endpoint and the underlying search API at
+https://job-search-api.svc.dhigroupinc.com/v1/dice/jobs/search
+which returns structured JSON without needing JS rendering.
+
+Best-effort: fails gracefully if Dice changes their API.
 """
 import json
 import os
 import logging
 import re
 from datetime import datetime
-from typing import Dict, Any, List, Optional
-from urllib.parse import urlencode
+from typing import Dict, Any, List, Optional, Set
 
 import boto3
 import requests
-from bs4 import BeautifulSoup
 
 from shared.models import ROLE_QUERIES, LOCATIONS, SALARY_MINIMUM
-from shared.crawler_utils import normalize_title, normalize_company, normalize_location, meets_salary_requirement
+from shared.crawler_utils import (
+    normalize_title,
+    normalize_company,
+    normalize_location,
+    meets_salary_requirement,
+    get_requests_proxy_dict,
+)
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 sqs_client = boto3.client("sqs")
 
-DICE_BASE_URL = "https://www.dice.com/jobs"
-TIMEOUT = 10
+# Dice's public search API
+DICE_API_URL = "https://job-search-api.svc.dhigroupinc.com/v1/dice/jobs/search"
+TIMEOUT = 15
 MAX_RETRIES = 3
+
+# User-Agent rotation to reduce blocking
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+]
 
 
 def parse_salary_from_text(text: str) -> tuple[Optional[int], Optional[int]]:
     """
     Parse salary range from job posting text.
 
-    Args:
-        text: Job description or salary text
+    Handles formats like:
+        $180,000 - $220,000
+        $180K - $220K
+        180000 - 220000
 
     Returns:
         Tuple of (min_salary, max_salary)
@@ -43,8 +63,8 @@ def parse_salary_from_text(text: str) -> tuple[Optional[int], Optional[int]]:
         return None, None
 
     try:
-        # Look for patterns like $180,000 or $180000 or 180K or 180k
-        pattern = r"\$?([\d,]+\.?\d*)[kK]?"
+        # Match dollar amounts with optional K suffix
+        pattern = r"\$?([\d,]+(?:\.\d+)?)\s*[kK]?"
         matches = re.findall(pattern, text)
 
         if not matches:
@@ -53,152 +73,188 @@ def parse_salary_from_text(text: str) -> tuple[Optional[int], Optional[int]]:
         salaries = []
         for match in matches:
             try:
-                # Remove commas and convert
                 clean = match.replace(",", "")
                 sal = int(float(clean))
-                # If it's a small number (like 3), assume it's in thousands
-                if sal < 100:
+                # Numbers under 1000 are likely in thousands (e.g., "180K")
+                if sal < 1000:
                     sal = sal * 1000
-                salaries.append(sal)
+                # Filter out unreasonable values (e.g., years, zip codes)
+                if 30000 <= sal <= 1000000:
+                    salaries.append(sal)
             except ValueError:
                 continue
 
         if not salaries:
             return None, None
 
-        # Return min and max from found salaries
-        return min(salaries), max(salaries) if len(salaries) > 1 else salaries[0]
+        return min(salaries), max(salaries) if len(salaries) > 1 else (salaries[0], None)
     except Exception as e:
         logger.debug(f"Error parsing salary: {e}")
         return None, None
 
 
-def scrape_dice_jobs(role: str, location: str, distance: Optional[int] = None) -> List[Dict[str, Any]]:
+def _get_session() -> requests.Session:
     """
-    Scrape Dice.com for jobs.
+    Create a requests session with proxy from Secrets Manager.
+
+    Uses get_requests_proxy_dict() which handles Oxylabs Web Scraper
+    API proxy endpoint (HTTPS proxy + SSL verification skip).
+    """
+    import random
+
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
+
+    proxy_dict, skip_ssl = get_requests_proxy_dict()
+
+    if proxy_dict:
+        session.proxies = proxy_dict
+        logger.info(f"Dice session using proxy (skip_ssl={skip_ssl})")
+
+    if skip_ssl:
+        # Oxylabs proxy endpoint does TLS termination —
+        # the client must skip cert verification on the
+        # proxy connection. Suppress the urllib3 warning.
+        session.verify = False
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    return session
+
+
+def scrape_dice_jobs(
+    role: str,
+    location: str,
+    distance: Optional[int] = None,
+    is_remote: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Search Dice for jobs using their public search API.
 
     Args:
         role: Job role/search term
-        location: Location
-        distance: Distance radius (Dice may not support this)
+        location: Location string
+        distance: Distance radius in miles
+        is_remote: Filter for remote jobs
 
     Returns:
-        List of job dicts
+        List of job dicts ready for SQS
     """
     jobs = []
 
     try:
-        # Build URL with query parameters
         params = {
             "q": role,
-            "location": location,
-            "filters.postedDate": "ONE",  # Posted in last day
-            "countryCode": "US",
+            "countryCode2": "US",
+            "radius": distance or 25,
+            "radiusUnit": "mi",
+            "page": 1,
+            "pageSize": 50,
+            "fields": "id|jobId|title|summary|description|postedDate|modifiedDate|company|location|salary|jobType|detailsPageUrl",
+            "culture": "en",
+            "recommendationId": "",
+            "interactionId": "0",
+            "fj": "true",
+            "includeRemote": "true" if is_remote else "false",
         }
 
-        if distance:
-            params["radius"] = distance
+        if is_remote:
+            params["filters.isRemote"] = "true"
 
-        url = f"{DICE_BASE_URL}?{urlencode(params)}"
-        logger.info(f"Scraping Dice URL: {url}")
+        if not is_remote:
+            params["location"] = location
 
-        # Fetch page with retries
+        logger.info(f"Searching Dice API: role={role}, location={location}, remote={is_remote}")
+
+        session = _get_session()
+
         for attempt in range(MAX_RETRIES):
             try:
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                }
-                response = requests.get(url, headers=headers, timeout=TIMEOUT)
+                response = session.get(DICE_API_URL, params=params, timeout=TIMEOUT)
+
+                if response.status_code == 429:
+                    logger.warning(f"Dice rate limited (429), attempt {attempt + 1}/{MAX_RETRIES}")
+                    import time
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                    continue
+
                 response.raise_for_status()
                 break
             except requests.exceptions.RequestException as e:
-                logger.warning(f"Attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
+                logger.warning(f"Dice API attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
                 if attempt == MAX_RETRIES - 1:
                     raise
 
-        # Try to parse JSON from __NEXT_DATA__ script tag
-        soup = BeautifulSoup(response.text, "html.parser")
-        script_tag = soup.find("script", {"id": "__NEXT_DATA__"})
+        data = response.json()
+        job_listings = data.get("data", [])
 
-        if not script_tag:
-            logger.warning("Could not find __NEXT_DATA__ script tag on Dice page")
+        if not job_listings:
+            logger.info(f"Dice API returned 0 jobs for {role}")
             return jobs
 
-        try:
-            data = json.loads(script_tag.string)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse __NEXT_DATA__ JSON")
-            return jobs
+        logger.info(f"Dice API returned {len(job_listings)} jobs for {role}")
 
-        # Navigate the JSON structure to find jobs
-        # Dice structure varies, so this is defensive
-        try:
-            # Common paths in Next.js apps
-            props = data.get("props", {}).get("pageProps", {})
-            job_listings = props.get("job_listings", [])
+        for job in job_listings:
+            try:
+                title = (job.get("title") or "").strip()
+                company_name = ""
+                company_obj = job.get("company", {})
+                if isinstance(company_obj, dict):
+                    company_name = (company_obj.get("name") or "").strip()
+                elif isinstance(company_obj, str):
+                    company_name = company_obj.strip()
 
-            if not job_listings and "initialState" in props:
-                initial_state = props.get("initialState", {})
-                job_listings = initial_state.get("jobs", {}).get("jobs", [])
+                location_str = (job.get("location") or "").strip()
+                job_url = (job.get("detailsPageUrl") or "").strip()
+                if job_url and not job_url.startswith("http"):
+                    job_url = f"https://www.dice.com{job_url}"
 
-            for job in job_listings:
-                try:
-                    title = job.get("title", "").strip()
-                    company = job.get("companyName", "").strip()
-                    location_str = job.get("location", "").strip()
-                    job_url = job.get("jobUrl", job.get("url", "")).strip()
-                    description = job.get("description", job.get("summary", "")).strip()
-                    posted_date = job.get("postedDate", job.get("datePosted", "")).strip()
+                description = (job.get("description") or job.get("summary") or "").strip()
+                posted_date = (job.get("postedDate") or job.get("modifiedDate") or "").strip()
 
-                    if not title or not job_url:
-                        continue
-
-                    # Extract salary if present
-                    salary_min, salary_max = None, None
-                    if "salary" in job:
-                        salary_str = str(job.get("salary", ""))
-                        salary_min, salary_max = parse_salary_from_text(salary_str)
-                    elif "salaryRange" in job:
-                        salary_range = job.get("salaryRange", {})
-                        if isinstance(salary_range, dict):
-                            salary_min = salary_range.get("min")
-                            salary_max = salary_range.get("max")
-
-                    # Also try parsing salary from description
-                    if not salary_min and description:
-                        salary_min, salary_max = parse_salary_from_text(description)
-
-                    # Check salary requirement
-                    if not meets_salary_requirement(salary_min, SALARY_MINIMUM):
-                        logger.debug(f"Skipping {title} - salary too low: {salary_min}")
-                        continue
-
-                    job_dict = {
-                        "source": "dice",
-                        "title": normalize_title(title),
-                        "company": normalize_company(company),
-                        "location": normalize_location(location_str),
-                        "salary_min": salary_min,
-                        "salary_max": salary_max,
-                        "job_url": job_url,
-                        "date_posted": posted_date,
-                        "description": description[:2000],
-                        "job_type": job.get("jobType", "").strip(),
-                        "crawled_at": datetime.utcnow().isoformat(),
-                    }
-
-                    jobs.append(job_dict)
-
-                except Exception as e:
-                    logger.debug(f"Error processing individual Dice job: {e}")
+                if not title or not job_url:
                     continue
 
-        except (KeyError, TypeError) as e:
-            logger.warning(f"Error navigating Dice JSON structure: {e}")
-            return jobs
+                # Parse salary
+                salary_min, salary_max = None, None
+                salary_str = job.get("salary", "")
+                if salary_str:
+                    salary_min, salary_max = parse_salary_from_text(str(salary_str))
+
+                # Fallback: try extracting from description
+                if salary_min is None and description:
+                    salary_min, salary_max = parse_salary_from_text(description[:500])
+
+                if not meets_salary_requirement(salary_min, SALARY_MINIMUM):
+                    logger.debug(f"Skipping {title} - salary too low: {salary_min}")
+                    continue
+
+                job_dict = {
+                    "source": "dice",
+                    "title": normalize_title(title),
+                    "company": normalize_company(company_name),
+                    "location": normalize_location(location_str),
+                    "salary_min": salary_min,
+                    "salary_max": salary_max,
+                    "job_url": job_url,
+                    "date_posted": posted_date,
+                    "description": description[:2000],
+                    "job_type": (job.get("jobType") or "").strip(),
+                    "crawled_at": datetime.utcnow().isoformat(),
+                }
+
+                jobs.append(job_dict)
+
+            except Exception as e:
+                logger.debug(f"Error processing individual Dice job: {e}")
+                continue
 
     except Exception as e:
-        logger.error(f"Error scraping Dice for {role} in {location}: {e}", exc_info=True)
+        logger.error(f"Error searching Dice for {role} in {location}: {e}", exc_info=True)
 
     return jobs
 
@@ -206,13 +262,6 @@ def scrape_dice_jobs(role: str, location: str, distance: Optional[int] = None) -
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Crawl Dice for jobs and send to SQS queue for enrichment.
-
-    Args:
-        event: EventBridge event
-        context: Lambda context
-
-    Returns:
-        Status dict
     """
     queue_url = os.environ.get("SQS_QUEUE_URL")
     if not queue_url:
@@ -221,26 +270,36 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     total_sent = 0
     total_errors = 0
+    seen_urls: Set[str] = set()
 
     for role in ROLE_QUERIES:
         for location_config in LOCATIONS:
             location = location_config.get("location")
             distance = location_config.get("distance")
-            # Dice doesn't support remote filtering, so skip remote-only queries
             is_remote = location_config.get("remote", False)
-            if is_remote:
-                continue
 
             try:
-                logger.info(f"Crawling Dice: role={role}, location={location}")
+                logger.info(f"Crawling Dice: role={role}, location={location}, remote={is_remote}")
 
-                jobs = scrape_dice_jobs(role, location, distance)
+                jobs = scrape_dice_jobs(
+                    role=role,
+                    location=location,
+                    distance=distance,
+                    is_remote=is_remote,
+                )
                 logger.info(f"Found {len(jobs)} jobs for {role} in {location}")
 
-                # Send each job to SQS
                 for job_dict in jobs:
                     try:
-                        sqs_client.send_message(QueueUrl=queue_url, MessageBody=json.dumps(job_dict, default=str))
+                        job_url = job_dict.get("job_url", "")
+                        if job_url in seen_urls:
+                            continue
+                        seen_urls.add(job_url)
+
+                        sqs_client.send_message(
+                            QueueUrl=queue_url,
+                            MessageBody=json.dumps(job_dict, default=str),
+                        )
                         total_sent += 1
                     except Exception as e:
                         logger.error(f"Error sending job to SQS: {e}")
@@ -248,7 +307,9 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         continue
 
             except Exception as e:
-                logger.error(f"Error crawling Dice for {role} in {location}: {e}", exc_info=True)
+                logger.error(
+                    f"Error crawling Dice for {role} in {location}: {e}", exc_info=True
+                )
                 total_errors += 1
                 continue
 

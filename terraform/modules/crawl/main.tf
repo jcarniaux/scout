@@ -52,12 +52,17 @@ resource "aws_secretsmanager_secret" "scraper_keys" {
 resource "aws_secretsmanager_secret_version" "scraper_keys" {
   secret_id = aws_secretsmanager_secret.scraper_keys.id
   secret_string = jsonencode({
-    linkedin_api_key     = "placeholder"
-    indeed_api_key       = "placeholder"
-    glassdoor_api_key    = "placeholder"
-    ziprecruiter_api_key = "placeholder"
-    dice_api_key         = "placeholder"
+    # Scraping proxy in user:pass@host:port format.
+    # Multiple proxies can be comma-separated.
+    # All crawlers rotate through these to avoid rate limiting.
+    scraping_proxy = "placeholder"
   })
+
+  # Ignore changes so that manual secret updates via CLI/Console
+  # are not overwritten on the next terraform apply.
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
 }
 
 # IAM role for Step Functions

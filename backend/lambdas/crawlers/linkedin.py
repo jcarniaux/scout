@@ -1,18 +1,27 @@
 """
 LinkedIn job crawler using JobSpy.
-Triggered by EventBridge on a schedule (daily).
+Triggered by Step Functions as part of the daily crawl pipeline.
+
+LinkedIn's guest API is more lenient than Indeed/Glassdoor, but still
+benefits from proxy rotation to avoid rate limiting on high-volume
+scrapes (10+ role queries × 2 locations = 20+ requests).
 """
 import json
 import os
 import logging
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Set
 
 import boto3
 from jobspy import scrape_jobs
 
 from shared.models import ROLE_QUERIES, LOCATIONS, SALARY_MINIMUM
-from shared.crawler_utils import extract_salary_min, extract_salary_max, meets_salary_requirement
+from shared.crawler_utils import (
+    extract_salary_min,
+    extract_salary_max,
+    meets_salary_requirement,
+    get_proxy_list,
+)
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -23,21 +32,16 @@ sqs_client = boto3.client("sqs")
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Crawl LinkedIn for jobs and send to SQS queue for enrichment.
-
-    Args:
-        event: EventBridge event
-        context: Lambda context
-
-    Returns:
-        Status dict
     """
     queue_url = os.environ.get("SQS_QUEUE_URL")
     if not queue_url:
         logger.error("SQS_QUEUE_URL environment variable not set")
         return {"statusCode": 500, "error": "Missing SQS_QUEUE_URL"}
 
+    proxies = get_proxy_list()
     total_sent = 0
     total_errors = 0
+    seen_urls: Set[str] = set()
 
     for role in ROLE_QUERIES:
         for location_config in LOCATIONS:
@@ -46,19 +50,26 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             is_remote = location_config.get("remote", False)
 
             try:
-                logger.info(f"Crawling LinkedIn: role={role}, location={location}, remote={is_remote}")
-
-                # Scrape jobs using JobSpy
-                jobs_df = scrape_jobs(
-                    site_name=["linkedin"],
-                    search_term=role,
-                    location=location,
-                    distance=distance,
-                    is_remote=is_remote,
-                    results_wanted=50,
-                    hours_old=24,  # Only last 24 hours
-                    country_indeed="USA",
+                logger.info(
+                    f"Crawling LinkedIn: role={role}, location={location}, remote={is_remote}"
                 )
+
+                kwargs: dict = {
+                    "site_name": ["linkedin"],
+                    "search_term": role,
+                    "location": location,
+                    "is_remote": is_remote,
+                    "results_wanted": 50,
+                    "hours_old": 24,
+                }
+
+                if distance:
+                    kwargs["distance"] = distance
+
+                if proxies:
+                    kwargs["proxies"] = proxies
+
+                jobs_df = scrape_jobs(**kwargs)
 
                 if jobs_df is None or len(jobs_df) == 0:
                     logger.info(f"No jobs found for {role} in {location}")
@@ -66,14 +77,20 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
                 logger.info(f"Found {len(jobs_df)} jobs for {role} in {location}")
 
-                # Process each job
                 for idx, job in jobs_df.iterrows():
                     try:
+                        job_url = str(job.get("job_url", "")).strip()
+
+                        if job_url in seen_urls:
+                            continue
+                        seen_urls.add(job_url)
+
                         salary_min = extract_salary_min(job)
 
-                        # Skip if below salary minimum
                         if not meets_salary_requirement(salary_min, SALARY_MINIMUM):
-                            logger.debug(f"Skipping {job.get('title')} - salary too low: {salary_min}")
+                            logger.debug(
+                                f"Skipping {job.get('title')} - salary too low: {salary_min}"
+                            )
                             continue
 
                         salary_max = extract_salary_max(job)
@@ -85,15 +102,17 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                             "location": str(job.get("location", "")).strip(),
                             "salary_min": salary_min,
                             "salary_max": salary_max,
-                            "job_url": str(job.get("job_url", "")).strip(),
+                            "job_url": job_url,
                             "date_posted": str(job.get("date_posted", "")).strip(),
                             "description": str(job.get("description", ""))[:2000],
                             "job_type": str(job.get("job_type", "")).strip(),
                             "crawled_at": datetime.utcnow().isoformat(),
                         }
 
-                        # Send to SQS
-                        sqs_client.send_message(QueueUrl=queue_url, MessageBody=json.dumps(message, default=str))
+                        sqs_client.send_message(
+                            QueueUrl=queue_url,
+                            MessageBody=json.dumps(message, default=str),
+                        )
                         total_sent += 1
 
                     except Exception as e:
@@ -102,7 +121,9 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         continue
 
             except Exception as e:
-                logger.error(f"Error crawling LinkedIn for {role} in {location}: {e}", exc_info=True)
+                logger.error(
+                    f"Error crawling LinkedIn for {role} in {location}: {e}", exc_info=True
+                )
                 total_errors += 1
                 continue
 
