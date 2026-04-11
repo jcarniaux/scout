@@ -71,11 +71,133 @@ def get_proxy_list() -> Optional[List[str]]:
     JobSpy accepts proxies in 'user:pass@host:port' format and
     handles the HTTP/HTTPS wrapping internally.
 
+    When an Oxylabs (or similar TLS-intercepting) proxy is detected,
+    this also patches tls_client so JobSpy's internal HTTPS calls
+    accept the proxy's re-signed certificate.
+
     Returns:
         List of proxy strings, or None if no proxies are configured.
     """
     proxies = _parse_proxy_strings()
-    return proxies if proxies else None
+    if not proxies:
+        return None
+
+    # If any proxy does TLS interception, apply patches
+    if any("oxylabs.io" in p for p in proxies):
+        _patch_tls_client_for_proxy()
+        _patch_jobspy_timeout_for_proxy()
+
+    return proxies
+
+
+# Guards so monkey-patches only run once per Lambda container
+_tls_client_patched = False
+_jobspy_timeout_patched = False
+
+# Proxy services add latency (TLS interception, anti-bot, rendering).
+# JobSpy's default 10s is too aggressive.
+PROXY_TIMEOUT_SECONDS = 45
+
+
+def _patch_tls_client_for_proxy() -> None:
+    """
+    Monkey-patch tls_client.Session to skip TLS certificate verification.
+
+    JobSpy uses tls_client internally (for Glassdoor, etc.). The Oxylabs
+    Web Scraper API proxy endpoint terminates TLS and re-signs responses
+    with its own CA, causing 'x509: certificate signed by unknown authority'
+    errors. This patch injects insecure_skip_verify=True into every
+    tls_client.Session created by JobSpy.
+
+    Only runs once — safe to call repeatedly.
+    """
+    global _tls_client_patched
+    if _tls_client_patched:
+        return
+
+    try:
+        import tls_client
+
+        _original_init = tls_client.Session.__init__
+
+        def _patched_init(self, *args, **kwargs):
+            kwargs["insecure_skip_verify"] = True
+            _original_init(self, *args, **kwargs)
+
+        tls_client.Session.__init__ = _patched_init
+        _tls_client_patched = True
+        logger.info("Patched tls_client.Session with insecure_skip_verify=True for proxy")
+    except ImportError:
+        logger.debug("tls_client not installed — no patch needed")
+    except Exception as e:
+        logger.warning(f"Failed to patch tls_client for proxy: {e}")
+
+
+def _patch_jobspy_timeout_for_proxy() -> None:
+    """
+    Increase JobSpy's internal HTTP timeout for proxied requests.
+
+    JobSpy defaults to ~10 s read timeout, which is too short when
+    requests route through a scraping proxy (Oxylabs adds latency for
+    TLS interception, anti-bot handling, and optional JS rendering).
+
+    This finds JobSpy's custom requests.Session subclass in jobspy.util
+    and patches its request() method to enforce PROXY_TIMEOUT_SECONDS.
+
+    Only runs once — safe to call repeatedly.
+    """
+    global _jobspy_timeout_patched
+    if _jobspy_timeout_patched:
+        return
+
+    try:
+        import importlib
+        import requests as _req
+
+        jobspy_util = importlib.import_module("jobspy.util")
+
+        # JobSpy wraps requests.Session in a subclass inside jobspy.util.
+        # Find it and patch its request() method.
+        for attr_name in dir(jobspy_util):
+            cls = getattr(jobspy_util, attr_name, None)
+            if (
+                isinstance(cls, type)
+                and issubclass(cls, _req.Session)
+                and cls is not _req.Session
+                and hasattr(cls, "request")
+            ):
+                _orig_request = cls.request
+
+                def _patched_request(
+                    self,
+                    method,
+                    url,
+                    *args,
+                    _orig=_orig_request,
+                    _timeout=PROXY_TIMEOUT_SECONDS,
+                    **kwargs,
+                ):
+                    # Set timeout if missing, or raise it if below minimum
+                    current = kwargs.get("timeout")
+                    if current is None:
+                        kwargs["timeout"] = _timeout
+                    elif isinstance(current, (int, float)) and current < _timeout:
+                        kwargs["timeout"] = _timeout
+                    return _orig(self, method, url, *args, **kwargs)
+
+                cls.request = _patched_request
+                _jobspy_timeout_patched = True
+                logger.info(
+                    f"Patched {cls.__name__}.request timeout to "
+                    f"{PROXY_TIMEOUT_SECONDS}s for proxy latency"
+                )
+                return
+
+        logger.debug("No custom session subclass found in jobspy.util — skipping timeout patch")
+    except ImportError:
+        logger.debug("jobspy not installed — no timeout patch needed")
+    except Exception as e:
+        logger.warning(f"Failed to patch JobSpy timeout for proxy: {e}")
 
 
 def get_requests_proxy_dict() -> tuple[Optional[dict], bool]:
