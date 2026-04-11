@@ -49,12 +49,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             last_key = None
             while True:
                 scan_kwargs_src = {
-                    "filter_expression": "source IN ({})".format(
+                    "filter_expression": "#src IN ({})".format(
                         ", ".join(f":s{i}" for i in range(len(purge_sources)))
                     ),
                     "expression_attribute_values": {
                         f":s{i}": s for i, s in enumerate(purge_sources)
                     },
+                    "expression_attribute_names": {"#src": "source"},
                 }
                 if last_key:
                     scan_kwargs_src["exclusive_start_key"] = last_key
