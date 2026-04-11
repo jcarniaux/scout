@@ -36,7 +36,7 @@ sqs_client = boto3.client("sqs")
 
 # Dice's public search API
 DICE_API_URL = "https://job-search-api.svc.dhigroupinc.com/v1/dice/jobs/search"
-TIMEOUT = 15
+TIMEOUT = 45  # Oxylabs proxy adds latency (TLS interception + anti-bot)
 MAX_RETRIES = 3
 
 # User-Agent rotation to reduce blocking
