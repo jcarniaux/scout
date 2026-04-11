@@ -25,7 +25,14 @@ def get_user_sub(event: Dict[str, Any]) -> Optional[str]:
 
 
 def get_date_range_start(date_range: Optional[str]) -> str:
-    """Convert date range param to ISO datetime string."""
+    """
+    Convert date range param to a date-only ISO string (YYYY-MM-DD).
+
+    The enrichment Lambda stores postedDate as date-only strings (e.g. "2026-04-11").
+    The DateIndex range key comparison must use the same format — a full ISO datetime
+    like "2026-04-11T00:00:00" is lexicographically GREATER than "2026-04-11", which
+    would exclude jobs posted on the boundary date.
+    """
     now = datetime.utcnow()
 
     if date_range == "24h":
@@ -37,7 +44,7 @@ def get_date_range_start(date_range: Optional[str]) -> str:
     else:
         start = now - timedelta(days=30)  # Default 30 days
 
-    return start.isoformat()
+    return start.date().isoformat()
 
 
 def serialize_job(item: Dict[str, Any]) -> Dict[str, Any]:

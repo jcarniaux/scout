@@ -117,13 +117,22 @@ def _test_jobspy_source(site_name: str, jobspy_name: str, role: str, location_co
     return report
 
 
-def _test_dice_oxylabs(role: str, location_config: dict) -> Dict[str, Any]:
-    """Test the Dice crawler (Oxylabs + BeautifulSoup)."""
-    from crawlers.dice import _build_search_url, _parse_jobs_from_html
+def _test_oxylabs_source(source: str, role: str, location_config: dict) -> Dict[str, Any]:
+    """Test an Oxylabs-based crawler (Dice, Glassdoor, ZipRecruiter)."""
+    # Dynamic import based on source
+    if source == "dice":
+        from crawlers.dice import _build_search_url, _parse_jobs_from_html
+    elif source == "glassdoor":
+        from crawlers.glassdoor import _build_search_url, _parse_jobs_from_html
+    elif source == "ziprecruiter":
+        from crawlers.ziprecruiter import _build_search_url, _parse_jobs_from_html
+    else:
+        return {"error": f"Unknown Oxylabs source: {source}"}
+
     from shared.oxylabs_client import OxylabsClient
 
     report: Dict[str, Any] = {
-        "source": "dice",
+        "source": source,
         "engine": "oxylabs+beautifulsoup",
         "timestamp": datetime.utcnow().isoformat(),
     }
@@ -224,11 +233,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         report["secrets"] = {"error": str(e)}
 
     # Map sources to their test functions
+    # Indeed: JobSpy (no rate limiting, works well)
+    # Glassdoor, ZipRecruiter, Dice: Oxylabs (Cloudflare blocks JobSpy)
     jobspy_sources = {
         "indeed": ("indeed", "indeed"),
-        "glassdoor": ("glassdoor", "glassdoor"),
-        "ziprecruiter": ("ziprecruiter", "zip_recruiter"),
     }
+
+    oxylabs_sources = {"glassdoor", "ziprecruiter", "dice"}
 
     source_reports = {}
     for source in requested_sources:
@@ -237,9 +248,9 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 name, jobspy_name = jobspy_sources[source]
                 logger.info(f"Diagnosing {name} via JobSpy...")
                 source_reports[source] = _test_jobspy_source(name, jobspy_name, role, loc)
-            elif source == "dice":
-                logger.info("Diagnosing Dice via Oxylabs...")
-                source_reports[source] = _test_dice_oxylabs(role, loc)
+            elif source in oxylabs_sources:
+                logger.info(f"Diagnosing {source} via Oxylabs...")
+                source_reports[source] = _test_oxylabs_source(source, role, loc)
             else:
                 source_reports[source] = {"error": f"Unknown source: {source}"}
         except Exception as e:
