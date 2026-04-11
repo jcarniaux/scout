@@ -346,7 +346,57 @@ resource "aws_api_gateway_integration" "put_user_settings" {
   uri                     = aws_lambda_function.get_user_settings.invoke_arn
 }
 
-# CORS support via OPTIONS methods
+# ─── CORS helpers ─────────────────────────────────────────────────────────────
+locals {
+  cors_headers = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+  cors_methods = "'GET,OPTIONS,POST,PUT,PATCH,DELETE'"
+  cors_origin  = "'https://${var.subdomain}.${var.domain_name}'"
+}
+
+# Method/integration responses for GET /jobs — kept to avoid destroy-order cycle
+# with create_before_destroy on the deployment. AWS_PROXY ignores these at
+# runtime (Lambda controls the response), but removing them forces a destroy
+# that entangles the deposed deployment's cleanup through the stage reference.
+resource "aws_api_gateway_method_response" "get_jobs" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.jobs.id
+  http_method = aws_api_gateway_method.get_jobs.http_method
+  status_code = "200"
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Origin" = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "get_jobs" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.jobs.id
+  http_method = aws_api_gateway_method.get_jobs.http_method
+  status_code = aws_api_gateway_method_response.get_jobs.status_code
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Origin" = local.cors_origin
+  }
+  depends_on = [
+    aws_api_gateway_integration.get_jobs,
+    aws_api_gateway_method_response.get_jobs,
+  ]
+}
+
+# ─── CORS OPTIONS handlers ────────────────────────────────────────────────────
+# Every resource that receives cross-origin requests needs an un-authenticated
+# OPTIONS method so the browser preflight succeeds before it sends the real
+# request with an Authorization header.
+#
+# Resources that need CORS:
+#   /jobs                  (GET)
+#   /jobs/{jobId}          (GET)
+#   /jobs/{jobId}/status   (PATCH)
+#   /user/settings         (GET, PUT)
+
+# Helper: reusable CORS MOCK integration block
+# (Terraform doesn't support modules for sub-resources, so we repeat the
+#  pattern for each resource — kept DRY via locals above.)
+
+# /jobs OPTIONS
 resource "aws_api_gateway_method" "jobs_options" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.jobs.id
@@ -364,7 +414,6 @@ resource "aws_api_gateway_integration" "jobs_options" {
   }
 }
 
-# method_response must exist before integration_response — declare it first
 resource "aws_api_gateway_method_response" "jobs_options" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   resource_id = aws_api_gateway_resource.jobs.id
@@ -384,9 +433,9 @@ resource "aws_api_gateway_integration_response" "jobs_options" {
   http_method = aws_api_gateway_method.jobs_options.http_method
   status_code = aws_api_gateway_method_response.jobs_options.status_code
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-    "method.response.header.Access-Control-Allow-Methods" = "'GET,OPTIONS,POST,PUT,PATCH,DELETE'"
-    "method.response.header.Access-Control-Allow-Origin"  = "'https://scout.carniaux.io'"
+    "method.response.header.Access-Control-Allow-Headers" = local.cors_headers
+    "method.response.header.Access-Control-Allow-Methods" = local.cors_methods
+    "method.response.header.Access-Control-Allow-Origin"  = local.cors_origin
   }
   depends_on = [
     aws_api_gateway_integration.jobs_options,
@@ -394,32 +443,192 @@ resource "aws_api_gateway_integration_response" "jobs_options" {
   ]
 }
 
-# Add CORS headers to other methods
-resource "aws_api_gateway_method_response" "get_jobs" {
+# /jobs/{jobId} OPTIONS
+resource "aws_api_gateway_method" "job_detail_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.job_detail.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "job_detail_options" {
   rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.jobs.id
-  http_method = aws_api_gateway_method.get_jobs.http_method
-  status_code = "200"
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Origin" = true
+  resource_id = aws_api_gateway_resource.job_detail.id
+  http_method = aws_api_gateway_method.job_detail_options.http_method
+  type        = "MOCK"
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
   }
 }
 
-resource "aws_api_gateway_integration_response" "get_jobs" {
+resource "aws_api_gateway_method_response" "job_detail_options" {
   rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.jobs.id
-  http_method = aws_api_gateway_method.get_jobs.http_method
-  status_code = aws_api_gateway_method_response.get_jobs.status_code
+  resource_id = aws_api_gateway_resource.job_detail.id
+  http_method = aws_api_gateway_method.job_detail_options.http_method
+  status_code = "200"
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Origin" = "'https://scout.carniaux.io'"
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+  depends_on = [aws_api_gateway_method.job_detail_options]
+}
+
+resource "aws_api_gateway_integration_response" "job_detail_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.job_detail.id
+  http_method = aws_api_gateway_method.job_detail_options.http_method
+  status_code = aws_api_gateway_method_response.job_detail_options.status_code
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = local.cors_headers
+    "method.response.header.Access-Control-Allow-Methods" = local.cors_methods
+    "method.response.header.Access-Control-Allow-Origin"  = local.cors_origin
   }
   depends_on = [
-    aws_api_gateway_integration.get_jobs,
-    aws_api_gateway_method_response.get_jobs,
+    aws_api_gateway_integration.job_detail_options,
+    aws_api_gateway_method_response.job_detail_options,
   ]
 }
 
-# API Gateway Stage
+# /jobs/{jobId}/status OPTIONS
+resource "aws_api_gateway_method" "job_status_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.job_status.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "job_status_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.job_status.id
+  http_method = aws_api_gateway_method.job_status_options.http_method
+  type        = "MOCK"
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "job_status_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.job_status.id
+  http_method = aws_api_gateway_method.job_status_options.http_method
+  status_code = "200"
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+  depends_on = [aws_api_gateway_method.job_status_options]
+}
+
+resource "aws_api_gateway_integration_response" "job_status_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.job_status.id
+  http_method = aws_api_gateway_method.job_status_options.http_method
+  status_code = aws_api_gateway_method_response.job_status_options.status_code
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = local.cors_headers
+    "method.response.header.Access-Control-Allow-Methods" = local.cors_methods
+    "method.response.header.Access-Control-Allow-Origin"  = local.cors_origin
+  }
+  depends_on = [
+    aws_api_gateway_integration.job_status_options,
+    aws_api_gateway_method_response.job_status_options,
+  ]
+}
+
+# /user/settings OPTIONS
+resource "aws_api_gateway_method" "user_settings_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.user_settings.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "user_settings_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.user_settings.id
+  http_method = aws_api_gateway_method.user_settings_options.http_method
+  type        = "MOCK"
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "user_settings_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.user_settings.id
+  http_method = aws_api_gateway_method.user_settings_options.http_method
+  status_code = "200"
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+  depends_on = [aws_api_gateway_method.user_settings_options]
+}
+
+resource "aws_api_gateway_integration_response" "user_settings_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.user_settings.id
+  http_method = aws_api_gateway_method.user_settings_options.http_method
+  status_code = aws_api_gateway_method_response.user_settings_options.status_code
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = local.cors_headers
+    "method.response.header.Access-Control-Allow-Methods" = local.cors_methods
+    "method.response.header.Access-Control-Allow-Origin"  = local.cors_origin
+  }
+  depends_on = [
+    aws_api_gateway_integration.user_settings_options,
+    aws_api_gateway_method_response.user_settings_options,
+  ]
+}
+
+# ─── API Gateway Deployment ───────────────────────────────────────────────────
+# The triggers block forces a new deployment whenever any method, integration,
+# authorizer, or CORS config changes. Without this, Terraform updates the REST
+# API resources in place but the live stage continues serving the old snapshot.
+resource "aws_api_gateway_deployment" "main" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+
+  triggers = {
+    redeployment = sha1(jsonencode([
+      aws_api_gateway_authorizer.cognito.id,
+      aws_api_gateway_authorizer.cognito.provider_arns,
+      aws_api_gateway_integration.get_jobs.id,
+      aws_api_gateway_integration.get_job_detail.id,
+      aws_api_gateway_integration.patch_job_status.id,
+      aws_api_gateway_integration.get_user_settings.id,
+      aws_api_gateway_integration.put_user_settings.id,
+      aws_api_gateway_integration.jobs_options.id,
+      aws_api_gateway_integration.job_detail_options.id,
+      aws_api_gateway_integration.job_status_options.id,
+      aws_api_gateway_integration.user_settings_options.id,
+    ]))
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  depends_on = [
+    aws_api_gateway_integration.get_jobs,
+    aws_api_gateway_integration.get_job_detail,
+    aws_api_gateway_integration.patch_job_status,
+    aws_api_gateway_integration.get_user_settings,
+    aws_api_gateway_integration.put_user_settings,
+    aws_api_gateway_integration.jobs_options,
+    aws_api_gateway_integration.job_detail_options,
+    aws_api_gateway_integration.job_status_options,
+    aws_api_gateway_integration.user_settings_options,
+    aws_api_gateway_integration_response.jobs_options,
+    aws_api_gateway_integration_response.job_detail_options,
+    aws_api_gateway_integration_response.job_status_options,
+    aws_api_gateway_integration_response.user_settings_options,
+  ]
+}
+
+# ─── API Gateway Stage ────────────────────────────────────────────────────────
 resource "aws_api_gateway_stage" "v1" {
   deployment_id = aws_api_gateway_deployment.main.id
   rest_api_id   = aws_api_gateway_rest_api.main.id
@@ -445,22 +654,6 @@ resource "aws_api_gateway_stage" "v1" {
   tags = {
     Name = "${var.project_name}-v1-stage"
   }
-}
 
-# API Gateway Deployment
-resource "aws_api_gateway_deployment" "main" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-
-  depends_on = [
-    aws_api_gateway_integration.get_jobs,
-    aws_api_gateway_integration.get_job_detail,
-    aws_api_gateway_integration.patch_job_status,
-    aws_api_gateway_integration.get_user_settings,
-    aws_api_gateway_integration.put_user_settings,
-    aws_api_gateway_integration.jobs_options,
-    aws_api_gateway_integration_response.get_jobs,
-    aws_api_gateway_integration_response.jobs_options,
-    aws_api_gateway_method_response.get_jobs,
-    aws_api_gateway_method_response.jobs_options,
-  ]
+  depends_on = [aws_api_gateway_deployment.main]
 }

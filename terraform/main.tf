@@ -162,9 +162,11 @@ module "monitoring" {
   # SES domain for bounce rate monitoring
   ses_verified_domain = var.ses_verified_domain
 
-  depends_on = [
-    module.crawl,
-    module.api,
-    module.email
-  ]
+  # Implicit dependencies on module.api and module.email are expressed through
+  # the input variable values above (api_gateway_id, api_stage_name, etc.).
+  # A broad depends_on = [module.api] would create a destroy-phase cycle when
+  # aws_api_gateway_deployment uses create_before_destroy, because Terraform
+  # can't resolve the ordering of the deposed deployment destruction while
+  # monitoring is also being updated.
+  depends_on = [module.crawl]
 }

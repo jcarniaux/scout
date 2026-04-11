@@ -6,6 +6,7 @@ on:
     paths:
       - "terraform/**"
       - "backend/**"
+      - "frontend/**"
   workflow_dispatch:
     inputs:
       action:
@@ -35,12 +36,15 @@ env:
 
 # ─── Job graph ────────────────────────────────────────────────────────────────
 #
-#   terraform ──┐
-#               ├──▶ backend-deploy
-#   backend-test┘
+#   terraform ──┬──▶ frontend-deploy
+#               └──┐
+#   backend-test   ├──▶ backend-deploy
+#                  ┘
 #
 # terraform and backend-test run in parallel.
-# backend-deploy only starts when both succeed AND we're not on a plan/destroy run.
+# frontend-deploy only needs terraform (for pool IDs and bucket name).
+# backend-deploy only starts when both terraform and backend-test succeed.
+# Both deploy jobs skip on plan/destroy runs.
 
 jobs:
   # ── 1. Infrastructure ────────────────────────────────────────────────────────
@@ -175,7 +179,71 @@ jobs:
           print('All files pass syntax check')
           EOF
 
-  # ── 3. Backend Deploy (needs terraform + tests) ───────────────────────────────
+  # ── 3. Frontend Deploy (needs terraform for Cognito IDs + bucket name) ──────
+  frontend-deploy:
+    name: Build & Deploy Frontend
+    needs: [terraform]
+    runs-on: ubuntu-latest
+    # Skip on plan-only or destroy runs.
+    if: >
+      github.ref == 'refs/heads/main' &&
+      github.event.inputs.action != 'plan' &&
+      github.event.inputs.action != 'destroy'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: frontend
+        env:
+          VITE_USER_POOL_ID:     ${{ needs.terraform.outputs.user_pool_id }}
+          VITE_USER_POOL_CLIENT_ID: ${{ needs.terraform.outputs.user_pool_client_id }}
+          VITE_API_URL:          ${{ needs.terraform.outputs.api_url }}
+        run: npm run build
+
+      - name: Deploy to S3
+        working-directory: frontend
+        run: |
+          BUCKET="${{ needs.terraform.outputs.frontend_bucket }}"
+          echo "Syncing to s3://$BUCKET"
+          # Long-lived assets (hashed filenames) — 1 year cache
+          aws s3 sync dist/ "s3://$BUCKET" \
+            --delete \
+            --cache-control "public,max-age=31536000,immutable" \
+            --exclude "index.html"
+          # index.html — no cache so browsers always get the latest entry point
+          aws s3 cp dist/index.html "s3://$BUCKET/index.html" \
+            --cache-control "no-cache,no-store,must-revalidate"
+          echo "✓ S3 sync complete"
+
+      - name: Invalidate CloudFront
+        run: |
+          CF_ID="${{ needs.terraform.outputs.cloudfront_id }}"
+          echo "Invalidating CloudFront distribution $CF_ID"
+          aws cloudfront create-invalidation \
+            --distribution-id "$CF_ID" \
+            --paths "/*"
+          echo "✓ CloudFront invalidation created"
+
+  # ── 4. Backend Deploy (needs terraform + tests) ───────────────────────────────
   backend-deploy:
     name: Build & Deploy Lambdas
     needs: [terraform, backend-test]
