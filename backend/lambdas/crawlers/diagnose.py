@@ -22,7 +22,7 @@ import time
 from datetime import datetime
 from typing import Any, Dict
 
-from shared.models import ROLE_QUERIES, LOCATIONS, SALARY_MINIMUM
+from shared.models import LOCATIONS, SALARY_MINIMUM
 from shared.crawler_utils import (
     get_scraper_secrets,
     get_proxy_list,
