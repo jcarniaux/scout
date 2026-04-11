@@ -11,6 +11,7 @@ Expects either:
   - scraping_proxy in "user:pass@host:port" format (legacy, parsed)
 """
 import logging
+import time
 from typing import Optional
 
 import requests
@@ -21,7 +22,8 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 REALTIME_URL = "https://realtime.oxylabs.io/v1/queries"
-DEFAULT_TIMEOUT = 90  # Oxylabs may take time to render + solve CAPTCHAs
+DEFAULT_TIMEOUT = 105  # Oxylabs may take time to render + solve CAPTCHAs
+MAX_RETRIES = 2  # Total attempts = 1 initial + MAX_RETRIES
 
 
 class OxylabsClient:
@@ -75,6 +77,9 @@ class OxylabsClient:
         """
         Fetch a fully rendered web page via Oxylabs Realtime API.
 
+        Retries on timeout or target-site errors (5xx, 6xx) up to
+        MAX_RETRIES times with exponential back-off.
+
         Args:
             url: Target URL to scrape
             render: Whether to render JavaScript (True for SPAs)
@@ -88,52 +93,81 @@ class OxylabsClient:
             "source": "universal",
             "url": url,
             "geo_location": geo_location,
+            "user_agent_type": "desktop_chrome",
         }
 
         if render:
             payload["render"] = "html"
 
-        try:
-            response = requests.post(
-                REALTIME_URL,
-                auth=(self.username, self.password),
-                json=payload,
-                timeout=timeout,
-            )
+        last_error = None
 
-            if response.status_code == 200:
-                data = response.json()
-                results = data.get("results", [])
-                if results:
-                    content = results[0].get("content", "")
-                    status_code = results[0].get("status_code")
-                    if status_code and status_code != 200:
-                        logger.warning(
-                            f"Oxylabs returned target status {status_code} for {url}"
-                        )
-                    return content
-                else:
-                    logger.warning(f"Oxylabs returned empty results for {url}")
+        for attempt in range(1, MAX_RETRIES + 2):
+            try:
+                response = requests.post(
+                    REALTIME_URL,
+                    auth=(self.username, self.password),
+                    json=payload,
+                    timeout=timeout,
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    results = data.get("results", [])
+                    if results:
+                        content = results[0].get("content", "")
+                        target_status = results[0].get("status_code")
+
+                        # Retry on target-site errors (5xx, 6xx = Oxylabs blocking codes)
+                        if target_status and target_status >= 500:
+                            logger.warning(
+                                f"Oxylabs target status {target_status} for {url} "
+                                f"(attempt {attempt}/{MAX_RETRIES + 1})"
+                            )
+                            last_error = f"target_status_{target_status}"
+                            if attempt <= MAX_RETRIES:
+                                time.sleep(2 ** attempt)
+                                continue
+                            # Final attempt — return whatever we got
+                            return content if content else None
+
+                        return content
+                    else:
+                        logger.warning(f"Oxylabs returned empty results for {url}")
+                        return None
+
+                elif response.status_code == 401:
+                    logger.error("Oxylabs authentication failed — check credentials")
                     return None
 
-            elif response.status_code == 401:
-                logger.error("Oxylabs authentication failed — check credentials")
-                return None
+                elif response.status_code == 422:
+                    logger.error(f"Oxylabs rejected request for {url}: {response.text}")
+                    return None
 
-            elif response.status_code == 422:
-                logger.error(f"Oxylabs rejected request for {url}: {response.text}")
-                return None
+                else:
+                    logger.error(
+                        f"Oxylabs returned {response.status_code} for {url}: "
+                        f"{response.text[:200]}"
+                    )
+                    last_error = f"http_{response.status_code}"
+                    if attempt <= MAX_RETRIES:
+                        time.sleep(2 ** attempt)
+                        continue
+                    return None
 
-            else:
-                logger.error(
-                    f"Oxylabs returned {response.status_code} for {url}: "
-                    f"{response.text[:200]}"
+            except requests.exceptions.Timeout:
+                logger.warning(
+                    f"Oxylabs request timed out after {timeout}s for {url} "
+                    f"(attempt {attempt}/{MAX_RETRIES + 1})"
                 )
+                last_error = "timeout"
+                if attempt <= MAX_RETRIES:
+                    time.sleep(2)
+                    continue
                 return None
 
-        except requests.exceptions.Timeout:
-            logger.error(f"Oxylabs request timed out after {timeout}s for {url}")
-            return None
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Oxylabs request failed for {url}: {e}")
-            return None
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Oxylabs request failed for {url}: {e}")
+                return None
+
+        logger.error(f"Oxylabs exhausted {MAX_RETRIES + 1} attempts for {url}: {last_error}")
+        return None

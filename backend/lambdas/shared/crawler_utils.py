@@ -73,50 +73,27 @@ def get_proxy_list() -> Optional[List[str]]:
 
     Used by the LinkedIn crawler (the only remaining JobSpy-based crawler).
 
+    NOTE: Oxylabs Web Scraper API proxy endpoints are EXCLUDED because
+    they perform TLS interception which is incompatible with JobSpy's
+    tls_client library (causes x509 certificate verification failures).
+    LinkedIn works fine without a proxy from Lambda IPs.
+
     Returns:
         List of proxy strings, or None if no proxies are configured.
     """
     proxies = _parse_proxy_strings()
-    return proxies if proxies else None
-
-
-def get_requests_proxy_dict() -> tuple[Optional[dict], bool]:
-    """
-    Build a requests-compatible proxy dict for direct HTTP calls
-    (e.g., the Dice crawler which uses requests.Session directly).
-
-    Handles Oxylabs Web Scraper API proxy endpoint which requires:
-      - HTTPS connection to the proxy (realtime.oxylabs.io:60000)
-      - SSL verification disabled (proxy does TLS termination)
-
-    Returns:
-        Tuple of (proxy_dict, skip_ssl_verify):
-          - proxy_dict: {"http": "...", "https": "..."} or None
-          - skip_ssl_verify: True if the proxy requires verify=False
-    """
-    proxies = _parse_proxy_strings()
     if not proxies:
-        return None, False
+        return None
 
-    import random
-    proxy = random.choice(proxies)
+    # Filter out Oxylabs proxies — they do TLS interception which
+    # breaks tls_client inside JobSpy (x509 cert verification errors).
+    compatible = [p for p in proxies if "oxylabs.io" not in p]
 
-    # Detect Oxylabs Web Scraper API proxy endpoint
-    is_oxylabs = "oxylabs.io" in proxy
+    if not compatible:
+        logger.info("All configured proxies are Oxylabs — LinkedIn will run without proxy")
+        return None
 
-    if proxy.startswith("socks"):
-        return {"http": proxy, "https": proxy}, False
-
-    if is_oxylabs:
-        # Oxylabs proxy endpoint requires HTTPS to the proxy itself.
-        # The proxy handles TLS termination, so we must skip SSL
-        # verification on the client-to-proxy connection.
-        proxy_url = f"https://{proxy}" if not proxy.startswith("http") else proxy
-        return {"http": proxy_url, "https": proxy_url}, True
-
-    # Standard HTTP proxy
-    proxy_url = f"http://{proxy}" if not proxy.startswith("http") else proxy
-    return {"http": proxy_url, "https": proxy_url}, False
+    return compatible
 
 
 def extract_salary_min(job: any) -> Optional[int]:
