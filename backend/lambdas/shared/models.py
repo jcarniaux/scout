@@ -9,6 +9,7 @@ from decimal import Decimal
 # Application statuses
 APPLICATION_STATUSES = [
     "NOT_APPLIED",
+    "NOT_INTERESTED",
     "APPLIED",
     "RECRUITER_INTERVIEW",
     "TECHNICAL_INTERVIEW",

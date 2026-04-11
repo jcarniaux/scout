@@ -8,6 +8,7 @@ interface StatusSelectProps {
 
 const statusOptions: Array<{ value: ApplicationStatus; label: string }> = [
   { value: 'NOT_APPLIED', label: 'Not Applied' },
+  { value: 'NOT_INTERESTED', label: 'Not Interested' },
   { value: 'APPLIED', label: 'Applied' },
   { value: 'RECRUITER_INTERVIEW', label: 'Recruiter Interview' },
   { value: 'TECHNICAL_INTERVIEW', label: 'Technical Interview' },
@@ -17,6 +18,7 @@ const statusOptions: Array<{ value: ApplicationStatus; label: string }> = [
 
 const statusColorMap: Record<ApplicationStatus, string> = {
   NOT_APPLIED: 'border-slate-200',
+  NOT_INTERESTED: 'border-rose-200',
   APPLIED: 'border-blue-200',
   RECRUITER_INTERVIEW: 'border-amber-200',
   TECHNICAL_INTERVIEW: 'border-orange-200',

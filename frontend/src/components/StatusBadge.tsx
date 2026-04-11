@@ -6,6 +6,7 @@ interface StatusBadgeProps {
 
 const statusConfig: Record<ApplicationStatus, { bg: string; text: string; label: string }> = {
   NOT_APPLIED: { bg: 'bg-slate-100', text: 'text-slate-700', label: 'Not Applied' },
+  NOT_INTERESTED: { bg: 'bg-rose-100', text: 'text-rose-700', label: 'Not Interested' },
   APPLIED: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Applied' },
   RECRUITER_INTERVIEW: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Recruiter Interview' },
   TECHNICAL_INTERVIEW: { bg: 'bg-orange-100', text: 'text-orange-700', label: 'Technical Interview' },

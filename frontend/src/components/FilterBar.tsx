@@ -19,6 +19,7 @@ export function FilterBar({ filters, onFiltersChange, activeFilterCount }: Filte
   const dateRangeOptions: DateRange[] = ['24h', '7d', '30d'];
   const statusOptions: ApplicationStatus[] = [
     'NOT_APPLIED',
+    'NOT_INTERESTED',
     'APPLIED',
     'RECRUITER_INTERVIEW',
     'TECHNICAL_INTERVIEW',
@@ -111,15 +112,17 @@ export function FilterBar({ filters, onFiltersChange, activeFilterCount }: Filte
               <option key={status} value={status}>
                 {status === 'NOT_APPLIED'
                   ? 'Not Applied'
-                  : status === 'APPLIED'
-                    ? 'Applied'
-                    : status === 'RECRUITER_INTERVIEW'
-                      ? 'Recruiter Interview'
-                      : status === 'TECHNICAL_INTERVIEW'
-                        ? 'Technical Interview'
-                        : status === 'OFFER_RECEIVED'
-                          ? 'Offer Received'
-                          : 'Offer Accepted'}
+                  : status === 'NOT_INTERESTED'
+                    ? 'Not Interested'
+                    : status === 'APPLIED'
+                      ? 'Applied'
+                      : status === 'RECRUITER_INTERVIEW'
+                        ? 'Recruiter Interview'
+                        : status === 'TECHNICAL_INTERVIEW'
+                          ? 'Technical Interview'
+                          : status === 'OFFER_RECEIVED'
+                            ? 'Offer Received'
+                            : 'Offer Accepted'}
               </option>
             ))}
           </select>

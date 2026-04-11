@@ -21,6 +21,7 @@ export interface Job {
 
 export type ApplicationStatus =
   | 'NOT_APPLIED'
+  | 'NOT_INTERESTED'
   | 'APPLIED'
   | 'RECRUITER_INTERVIEW'
   | 'TECHNICAL_INTERVIEW'
