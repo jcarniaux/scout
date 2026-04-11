@@ -311,6 +311,7 @@ jobs:
             "scout-crawler-glassdoor"
             "scout-crawler-ziprecruiter"
             "scout-crawler-dice"
+            "scout-crawl-diagnose"
           )
           for fn in "${FUNCTIONS[@]}"; do
             echo "Deploying $fn..."

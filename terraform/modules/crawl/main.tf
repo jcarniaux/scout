@@ -258,6 +258,29 @@ resource "aws_lambda_function" "crawler_dice" {
   }
 }
 
+# Diagnostic Lambda — read-only crawler pipeline tester
+# Invoke manually: aws lambda invoke --function-name scout-crawl-diagnose out.json
+resource "aws_lambda_function" "crawl_diagnose" {
+  filename      = data.archive_file.lambda_placeholder.output_path
+  function_name = "${var.project_name}-crawl-diagnose"
+  role          = aws_iam_role.crawler_role.arn
+  handler       = "crawlers.diagnose.handler"
+  runtime       = "python3.12"
+  timeout       = 900
+  memory_size   = 512
+
+  environment {
+    variables = {
+      SQS_QUEUE_URL = aws_sqs_queue.raw_jobs.url
+      SECRETS_ARN   = aws_secretsmanager_secret.scraper_keys.arn
+    }
+  }
+
+  tags = {
+    Name = "${var.project_name}-crawl-diagnose"
+  }
+}
+
 # IAM role for enrichment Lambda
 resource "aws_iam_role" "enrichment_role" {
   name = "${var.project_name}-enrichment-role"
