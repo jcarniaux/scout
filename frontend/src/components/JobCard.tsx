@@ -56,29 +56,26 @@ export function JobCard({ job }: JobCardProps) {
         </div>
       </div>
 
-      {/* Row 2 — company + rating + source badge */}
-      <div className="flex flex-wrap items-center gap-2 mb-2">
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{job.company}</span>
+      {/* Row 2 — company · rating · source · location · date · salary all on one line */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm mb-3">
+        <span className="font-medium text-gray-700 dark:text-gray-200">{job.company}</span>
         <RatingBadge rating={job.glassdoorRating} glassdoorUrl={job.glassdoorUrl} />
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${sourceClass}`}>
           {sourceLabel}
         </span>
-      </div>
-
-      {/* Row 3 — location · date · salary all on one line */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-500 dark:text-gray-400 mb-3">
-        <span className="flex items-center gap-1">
+        <span className="text-gray-300 dark:text-gray-600">·</span>
+        <span className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
           <MapPin className="w-3.5 h-3.5 shrink-0" />
           {job.location || 'Location unknown'}
         </span>
-        <span className="hidden sm:inline text-gray-300 dark:text-gray-600">·</span>
-        <span className="flex items-center gap-1">
+        <span className="text-gray-300 dark:text-gray-600">·</span>
+        <span className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
           <Calendar className="w-3.5 h-3.5 shrink-0" />
           {formatPostedDate(job.postedDate)}
         </span>
         {salaryDisplay && (
           <>
-            <span className="hidden sm:inline text-gray-300 dark:text-gray-600">·</span>
+            <span className="text-gray-300 dark:text-gray-600">·</span>
             <span className="flex items-center gap-1 text-green-600 dark:text-green-400 font-medium">
               <DollarSign className="w-3.5 h-3.5 shrink-0" />
               {salaryDisplay}
