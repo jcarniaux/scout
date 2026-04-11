@@ -12,7 +12,7 @@ Amplify.configure(amplifyConfig);
 function AppContent() {
   return (
     <Router>
-      <div className="min-h-screen bg-slate-50">
+      <div className="min-h-screen bg-slate-50 dark:bg-gray-950 transition-colors">
         <Navbar />
         <main>
           <Routes>

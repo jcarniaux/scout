@@ -5,11 +5,6 @@ import { RatingBadge } from './RatingBadge';
 import { ExternalLink, MapPin, DollarSign, Calendar } from 'lucide-react';
 import { useUpdateStatus } from '@/hooks/useJobs';
 
-/**
- * Safely format a date string for display.
- * Returns "Date unknown" for null, undefined, "nan", or any other invalid value
- * rather than throwing a RangeError from date-fns.
- */
 function formatPostedDate(dateStr: string | null | undefined): string {
   if (!dateStr) return 'Date unknown';
   const date = new Date(dateStr);
@@ -22,11 +17,11 @@ interface JobCardProps {
 }
 
 const sourceColors: Record<string, string> = {
-  linkedin: 'bg-blue-100 text-blue-700',
-  indeed: 'bg-purple-100 text-purple-700',
-  glassdoor: 'bg-green-100 text-green-700',
-  ziprecruiter: 'bg-orange-100 text-orange-700',
-  dice: 'bg-red-100 text-red-700',
+  linkedin:      'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
+  indeed:        'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300',
+  glassdoor:     'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300',
+  ziprecruiter:  'bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300',
+  dice:          'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
 };
 
 export function JobCard({ job }: JobCardProps) {
@@ -38,87 +33,101 @@ export function JobCard({ job }: JobCardProps) {
 
   const salaryDisplay =
     job.salaryMin && job.salaryMax
-      ? `$${(job.salaryMin / 1000).toFixed(0)}K - $${(job.salaryMax / 1000).toFixed(0)}K`
-      : 'Not disclosed';
+      ? `$${(job.salaryMin / 1000).toFixed(0)}K – $${(job.salaryMax / 1000).toFixed(0)}K`
+      : null;
+
+  const sourceLabel = job.source.charAt(0).toUpperCase() + job.source.slice(1);
+  const sourceClass = sourceColors[job.source] || 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 p-5 hover:shadow-md transition-shadow">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
-        <div className="flex-1">
-          <h3 className="text-lg font-semibold text-gray-900 mb-1">{job.roleName}</h3>
-          <div className="flex flex-wrap items-center gap-2 mb-2">
-            <span className="font-medium text-gray-700">{job.company}</span>
-            <RatingBadge rating={job.glassdoorRating} glassdoorUrl={job.glassdoorUrl} />
-            <span
-              className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${sourceColors[job.source] || 'bg-gray-100 text-gray-700'}`}
-            >
-              {job.source.charAt(0).toUpperCase() + job.source.slice(1)}
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-slate-200 dark:border-gray-700 px-5 py-4 hover:shadow-md dark:hover:shadow-gray-900 transition-shadow">
+
+      {/* Row 1 — role title + status select */}
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-1.5">
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white leading-snug">
+          {job.roleName}
+        </h3>
+        <div className="shrink-0">
+          <StatusSelect
+            value={job.applicationStatus}
+            onChange={handleStatusChange}
+            disabled={updateStatus.isPending}
+          />
+        </div>
+      </div>
+
+      {/* Row 2 — company + rating + source badge */}
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{job.company}</span>
+        <RatingBadge rating={job.glassdoorRating} glassdoorUrl={job.glassdoorUrl} />
+        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${sourceClass}`}>
+          {sourceLabel}
+        </span>
+      </div>
+
+      {/* Row 3 — location · date · salary all on one line */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-500 dark:text-gray-400 mb-3">
+        <span className="flex items-center gap-1">
+          <MapPin className="w-3.5 h-3.5 shrink-0" />
+          {job.location || 'Location unknown'}
+        </span>
+        <span className="hidden sm:inline text-gray-300 dark:text-gray-600">·</span>
+        <span className="flex items-center gap-1">
+          <Calendar className="w-3.5 h-3.5 shrink-0" />
+          {formatPostedDate(job.postedDate)}
+        </span>
+        {salaryDisplay && (
+          <>
+            <span className="hidden sm:inline text-gray-300 dark:text-gray-600">·</span>
+            <span className="flex items-center gap-1 text-green-600 dark:text-green-400 font-medium">
+              <DollarSign className="w-3.5 h-3.5 shrink-0" />
+              {salaryDisplay}
             </span>
-          </div>
+          </>
+        )}
+      </div>
+
+      {/* Row 4 — benefits pills (optional) */}
+      {(job.ptoDays || job.sickDays || job.match401k || job.benefits) && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {job.ptoDays && (
+            <span className="px-2 py-0.5 bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300 text-xs font-medium rounded-full">
+              {job.ptoDays} PTO days
+            </span>
+          )}
+          {job.sickDays && (
+            <span className="px-2 py-0.5 bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300 text-xs font-medium rounded-full">
+              {job.sickDays} sick days
+            </span>
+          )}
+          {job.match401k && (
+            <span className="px-2 py-0.5 bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300 text-xs font-medium rounded-full">
+              {job.match401k} 401(k)
+            </span>
+          )}
+          {job.benefits && (
+            <span className="px-2 py-0.5 bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300 text-xs font-medium rounded-full truncate max-w-xs">
+              {job.benefits}
+            </span>
+          )}
         </div>
-        <StatusSelect
-          value={job.applicationStatus}
-          onChange={handleStatusChange}
-          disabled={updateStatus.isPending}
-        />
-      </div>
+      )}
 
-      {/* Location and Date */}
-      <div className="flex flex-wrap gap-4 text-sm text-gray-600 mb-4">
-        <div className="flex items-center gap-1.5">
-          <MapPin className="w-4 h-4 flex-shrink-0" />
-          <span>{job.location}</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Calendar className="w-4 h-4 flex-shrink-0" />
-          <span>{formatPostedDate(job.postedDate)}</span>
-        </div>
-      </div>
-
-      {/* Salary */}
-      <div className="flex items-center gap-1.5 mb-4 text-sm font-medium text-gray-900">
-        <DollarSign className="w-4 h-4 flex-shrink-0 text-green-600" />
-        <span>{salaryDisplay}</span>
-      </div>
-
-      {/* Benefits Row */}
-      <div className="flex flex-wrap gap-2 mb-4">
-        {job.ptoDays && (
-          <span className="px-2.5 py-1 bg-slate-100 text-slate-700 text-xs font-medium rounded-full">
-            {job.ptoDays} PTO days
-          </span>
-        )}
-        {job.sickDays && (
-          <span className="px-2.5 py-1 bg-slate-100 text-slate-700 text-xs font-medium rounded-full">
-            {job.sickDays} Sick days
-          </span>
-        )}
-        {job.match401k && (
-          <span className="px-2.5 py-1 bg-slate-100 text-slate-700 text-xs font-medium rounded-full">
-            {job.match401k} 401(k)
-          </span>
-        )}
-        {job.benefits && (
-          <span className="px-2.5 py-1 bg-slate-100 text-slate-700 text-xs font-medium rounded-full truncate">
-            {job.benefits}
-          </span>
-        )}
-      </div>
-
-      {/* Notes */}
-      {job.notes && <p className="text-sm text-gray-600 mb-4 line-clamp-2">{job.notes}</p>}
+      {/* Notes (optional) */}
+      {job.notes && (
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-3 line-clamp-2">{job.notes}</p>
+      )}
 
       {/* Actions */}
       <div className="flex gap-2">
         <a
-          href={job.sourceUrl}
+          href={job.sourceUrl ?? '#'}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-700 transition-colors"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors"
         >
           View Posting
-          <ExternalLink className="w-4 h-4" />
+          <ExternalLink className="w-3.5 h-3.5" />
         </a>
       </div>
     </div>

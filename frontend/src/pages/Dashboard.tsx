@@ -12,31 +12,26 @@ export function Dashboard() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
-  // Parse filters from URL
-  const filters: JobFilters = useMemo(() => {
-    return {
-      dateRange: (searchParams.get('dateRange') as DateRange) || undefined,
-      minRating: searchParams.get('minRating') ? parseFloat(searchParams.get('minRating')!) : undefined,
-      status: (searchParams.get('status') as ApplicationStatus) || undefined,
-      search: searchParams.get('search') || undefined,
-      sort: (searchParams.get('sort') as JobFilters['sort']) || 'date',
-    };
-  }, [searchParams]);
+  const filters: JobFilters = useMemo(() => ({
+    dateRange:  (searchParams.get('dateRange') as DateRange) || undefined,
+    minRating:  searchParams.get('minRating') ? parseFloat(searchParams.get('minRating')!) : undefined,
+    status:     (searchParams.get('status') as ApplicationStatus) || undefined,
+    search:     searchParams.get('search') || undefined,
+    sort:       (searchParams.get('sort') as JobFilters['sort']) || 'date',
+  }), [searchParams]);
 
-  // Sync filters to URL
   const updateFilters = (newFilters: JobFilters) => {
     const params = new URLSearchParams();
     if (newFilters.dateRange) params.set('dateRange', newFilters.dateRange);
     if (newFilters.minRating) params.set('minRating', String(newFilters.minRating));
-    if (newFilters.status) params.set('status', newFilters.status);
-    if (newFilters.search) params.set('search', newFilters.search);
-    if (newFilters.sort) params.set('sort', newFilters.sort);
+    if (newFilters.status)    params.set('status', newFilters.status);
+    if (newFilters.search)    params.set('search', newFilters.search);
+    if (newFilters.sort)      params.set('sort', newFilters.sort);
     setSearchParams(params);
-    setCurrentPage(1); // Reset to page 1 when filters change
+    setCurrentPage(1);
   };
 
   const { data, isLoading, error, refetch } = useJobs(filters, currentPage, pageSize);
-
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
   return (
@@ -45,10 +40,10 @@ export function Dashboard() {
       <div className="mb-8">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
               Job Postings
               {data && (
-                <span className="text-lg font-normal text-gray-600">
+                <span className="text-lg font-normal text-gray-500 dark:text-gray-400">
                   ({data.totalCount})
                 </span>
               )}
@@ -56,7 +51,7 @@ export function Dashboard() {
             {data && data.items.length > 0 && (() => {
               const d = new Date(data.items[0].createdAt);
               return !isNaN(d.getTime()) ? (
-                <p className="text-sm text-gray-600 mt-1">
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                   Last updated {formatDistanceToNow(d, { addSuffix: true })}
                 </p>
               ) : null;
@@ -64,7 +59,7 @@ export function Dashboard() {
           </div>
           <button
             onClick={() => refetch()}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors self-start sm:self-auto"
+            className="flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 font-medium rounded-lg transition-colors self-start sm:self-auto"
           >
             <RefreshCw className="w-4 h-4" />
             Refresh
@@ -72,10 +67,7 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Filters */}
       <FilterBar filters={filters} onFiltersChange={updateFilters} activeFilterCount={activeFilterCount} />
-
-      {/* Job List */}
       <JobList
         data={data}
         isLoading={isLoading}
