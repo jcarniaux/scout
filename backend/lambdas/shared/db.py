@@ -60,6 +60,12 @@ class DynamoDBHelper:
                 kwargs["ConditionExpression"] = condition_expression
             table.put_item(**kwargs)
             return True
+        except self.dynamodb.meta.client.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                logger.debug(f"Conditional check failed for {table_name} (expected for dedup)")
+            else:
+                logger.error(f"Error putting item to {table_name}: {e}")
+            raise
         except Exception as e:
             logger.error(f"Error putting item to {table_name}: {e}")
             raise

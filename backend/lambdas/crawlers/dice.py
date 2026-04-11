@@ -347,9 +347,11 @@ def _parse_jobs_from_html(html: str) -> List[Dict[str, Any]]:
         page_title = title_tag.get_text(strip=True)[:200] if title_tag else "(no title)"
         body = soup.find("body")
         body_text = body.get_text(separator=" ", strip=True)[:2000] if body else ""
+        selector = 'a[href*="/job-detail/"]'
+        detail_link_count = len(soup.select(selector))
         logger.warning(
             f"Dice: 0 jobs extracted. page_title='{page_title}', "
-            f"html_size={len(html)}, detail_links={len(soup.select('a[href*=\"/job-detail/\"]'))}"
+            f"html_size={len(html)}, detail_links={detail_link_count}"
         )
         logger.warning(f"Dice body text snippet: {body_text[:1000]}")
 

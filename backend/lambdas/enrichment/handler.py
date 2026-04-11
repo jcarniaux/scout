@@ -117,8 +117,8 @@ def fetch_glassdoor_rating(company: str, cache_table: str) -> Optional[float]:
     try:
         company_key = company.lower().strip()
 
-        # Check cache first
-        cached = dynamodb.get_item(cache_table, {"company_normalized": company_key})
+        # Check cache first — table primary key is "pk"
+        cached = dynamodb.get_item(cache_table, {"pk": company_key})
 
         if cached:
             rating = cached.get("rating")
@@ -150,7 +150,7 @@ def fetch_glassdoor_rating(company: str, cache_table: str) -> Optional[float]:
                 # Cache the result with 7-day TTL
                 ttl = int((datetime.utcnow() + timedelta(days=7)).timestamp())
                 cache_item = {
-                    "company_normalized": company_key,
+                    "pk": company_key,
                     "rating": rating,
                     "last_checked": datetime.utcnow().isoformat(),
                     "ttl": ttl,
@@ -164,7 +164,7 @@ def fetch_glassdoor_rating(company: str, cache_table: str) -> Optional[float]:
         # Cache the failed attempt
         ttl = int((datetime.utcnow() + timedelta(days=7)).timestamp())
         cache_item = {
-            "company_normalized": company_key,
+            "pk": company_key,
             "last_checked": datetime.utcnow().isoformat(),
             "ttl": ttl,
         }
