@@ -56,8 +56,8 @@ export function JobCard({ job }: JobCardProps) {
         </div>
       </div>
 
-      {/* Row 2 — company · rating · source · location · date · salary all on one line */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm mb-3">
+      {/* Row 2 — company · rating · source · location · date · salary · View Posting */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm mb-2">
         <span className="font-medium text-gray-700 dark:text-gray-200">{job.company}</span>
         <RatingBadge rating={job.glassdoorRating} glassdoorUrl={job.glassdoorUrl} />
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${sourceClass}`}>
@@ -82,6 +82,16 @@ export function JobCard({ job }: JobCardProps) {
             </span>
           </>
         )}
+        <span className="text-gray-300 dark:text-gray-600">·</span>
+        <a
+          href={job.sourceUrl ?? '#'}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-primary hover:text-primary-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium transition-colors"
+        >
+          View Posting
+          <ExternalLink className="w-3.5 h-3.5" />
+        </a>
       </div>
 
       {/* Row 4 — benefits pills (optional) */}
@@ -115,18 +125,6 @@ export function JobCard({ job }: JobCardProps) {
         <p className="text-sm text-gray-500 dark:text-gray-400 mb-3 line-clamp-2">{job.notes}</p>
       )}
 
-      {/* Actions */}
-      <div className="flex gap-2">
-        <a
-          href={job.sourceUrl ?? '#'}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors"
-        >
-          View Posting
-          <ExternalLink className="w-3.5 h-3.5" />
-        </a>
-      </div>
     </div>
   );
 }
