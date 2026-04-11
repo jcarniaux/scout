@@ -120,9 +120,10 @@ def _patch_tls_client_for_proxy() -> None:
 
         _original_init = tls_client.Session.__init__
 
-        def _patched_init(self, *args, **kwargs):
-            kwargs["insecure_skip_verify"] = True
-            _original_init(self, *args, **kwargs)
+        def _patched_init(self, *args, _orig=_original_init, **kwargs):
+            _orig(self, *args, **kwargs)
+            # Set after init — not all tls_client versions accept it as a kwarg
+            self.insecure_skip_verify = True
 
         tls_client.Session.__init__ = _patched_init
         _tls_client_patched = True
