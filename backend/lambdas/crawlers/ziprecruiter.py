@@ -130,6 +130,7 @@ def _parse_jobs_from_html(html: str) -> List[Dict[str, Any]]:
         "a.job_link",
         "h2 a",
         "h3 a",
+        "a[href*='jid=']",
         "a[href*='/jobs/']",
         "a[href*='/job/']",
     ]
@@ -174,8 +175,10 @@ def _parse_jobs_from_html(html: str) -> List[Dict[str, Any]]:
                 if link_el and link_el.name == "a" and link_el.get("href"):
                     break
             if not link_el or not link_el.get("href"):
-                link_el = card.select_one("a[href*='/jobs/']") or card.select_one(
-                    "a[href*='/job/']"
+                link_el = (
+                    card.select_one("a[href*='jid=']")
+                    or card.select_one("a[href*='/jobs/']")
+                    or card.select_one("a[href*='/job/']")
                 )
             if link_el and link_el.get("href"):
                 href = link_el["href"]
@@ -217,15 +220,29 @@ def _parse_jobs_from_html(html: str) -> List[Dict[str, Any]]:
 
     # ── Phase 2: Generic link-based fallback ──
     if not jobs:
-        # ZipRecruiter job links typically match /jobs/ or /job/ patterns
-        job_links = soup.select("a[href*='/jobs/']")
-        if not job_links:
-            job_links = soup.select("a[href*='/job/']")
-        # Filter out navigation/category links — real job links are longer
+        # ZipRecruiter job detail links use patterns like:
+        #   /c/CompanyName/Job/Title/in-Location?jid=abc123
+        #   /jobs/...?jid=abc123
+        # The most reliable indicator is ?jid= (job ID param) in the URL.
         job_links = [
-            a for a in job_links
-            if a.get("href") and len(a.get("href", "")) > 30
+            a for a in soup.find_all("a", href=True)
+            if "jid=" in a.get("href", "")
         ]
+        if not job_links:
+            # Fallback: links through /c/*/Job/* path (company job listings)
+            job_links = [
+                a for a in soup.find_all("a", href=True)
+                if re.search(r"/c/[^/]+/Job/", a.get("href", ""))
+            ]
+        if not job_links:
+            # Broadest fallback: /jobs/ or /job/ with a minimum length
+            job_links = soup.select("a[href*='/jobs/']")
+            if not job_links:
+                job_links = soup.select("a[href*='/job/']")
+            job_links = [
+                a for a in job_links
+                if a.get("href") and len(a.get("href", "")) > 30
+            ]
 
         logger.info(f"Phase 2 fallback: Found {len(job_links)} job links")
 

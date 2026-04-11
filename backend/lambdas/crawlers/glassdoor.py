@@ -304,6 +304,13 @@ def _parse_jobs_from_html(html: str) -> List[Dict[str, Any]]:
     return jobs
 
 
+
+# Glassdoor-specific tuning — shorter timeout + fewer retries so the
+# Lambda doesn't burn its entire 900 s budget on timeouts.
+GLASSDOOR_TIMEOUT = 60  # seconds (vs default 105)
+GLASSDOOR_MAX_CONSECUTIVE_FAILURES = 5  # bail early if Oxylabs can't reach Glassdoor
+
+
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Crawl Glassdoor for jobs using Oxylabs and send to SQS."""
     queue_url = os.environ.get("SQS_QUEUE_URL")
@@ -319,10 +326,20 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     total_sent = 0
     total_errors = 0
+    consecutive_failures = 0
     seen_urls: Set[str] = set()
 
     for role in ROLE_QUERIES:
         for location_config in LOCATIONS:
+            # Circuit breaker: if Oxylabs can't reach Glassdoor at all,
+            # stop burning Lambda time on retries.
+            if consecutive_failures >= GLASSDOOR_MAX_CONSECUTIVE_FAILURES:
+                logger.warning(
+                    f"Glassdoor: {consecutive_failures} consecutive Oxylabs failures — "
+                    f"aborting remaining queries to preserve Lambda budget"
+                )
+                break
+
             location = location_config.get("location")
             distance = location_config.get("distance")
             is_remote = location_config.get("remote", False)
@@ -333,11 +350,15 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     f"Crawling Glassdoor: role={role}, location={location}, remote={is_remote}"
                 )
 
-                html = client.fetch_page(url)
+                html = client.fetch_page(url, timeout=GLASSDOOR_TIMEOUT)
                 if not html:
                     logger.warning(f"No HTML returned for {role} in {location}")
                     total_errors += 1
+                    consecutive_failures += 1
                     continue
+
+                # Got HTML — reset failure counter
+                consecutive_failures = 0
 
                 jobs = _parse_jobs_from_html(html)
                 logger.info(f"Parsed {len(jobs)} jobs for {role} in {location}")
@@ -368,6 +389,11 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     exc_info=True,
                 )
                 total_errors += 1
+                consecutive_failures += 1
+
+        # Also check the circuit breaker in the outer loop
+        if consecutive_failures >= GLASSDOOR_MAX_CONSECUTIVE_FAILURES:
+            break
 
     logger.info(f"Glassdoor crawl complete: {total_sent} sent, {total_errors} errors")
     return {
