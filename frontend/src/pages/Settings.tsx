@@ -36,8 +36,8 @@ export function Settings() {
       const sp = settings.searchPreferences ?? DEFAULT_SEARCH_PREFS;
       setRoleQueries(sp.roleQueries ?? []);
       setLocations(sp.locations ?? []);
-      setSalaryMin(sp.salaryMin != null ? String(sp.salaryMin) : '');
-      setSalaryMax(sp.salaryMax != null ? String(sp.salaryMax) : '');
+      setSalaryMin(sp.salaryMin ? String(sp.salaryMin) : '');
+      setSalaryMax(sp.salaryMax ? String(sp.salaryMax) : '');
     }
   }, [settings]);
 
@@ -245,7 +245,7 @@ export function Settings() {
 
           {/* Salary Range */}
           <div>
-            <label className={labelClass}>Salary Range</label>
+            <label className={labelClass}>Salary Range (optional)</label>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs text-gray-400 dark:text-gray-500 mb-1">Minimum</label>
@@ -255,7 +255,7 @@ export function Settings() {
                     type="number"
                     min="0"
                     step="10000"
-                    placeholder="180000"
+                    placeholder="No minimum"
                     value={salaryMin}
                     onChange={(e) => setSalaryMin(e.target.value)}
                     className={inputClass + ' pl-7'}
@@ -263,7 +263,7 @@ export function Settings() {
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-gray-400 dark:text-gray-500 mb-1">Maximum (optional)</label>
+                <label className="block text-xs text-gray-400 dark:text-gray-500 mb-1">Maximum</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
                   <input
@@ -277,22 +277,6 @@ export function Settings() {
                   />
                 </div>
               </div>
-            </div>
-            {!salaryMin && (
-              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
-                Default minimum: $180,000
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* ── Email Section ── */}
-        <div className={sectionClass}>
-          <h2 className={headingClass}>Email</h2>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-gray-500 dark:text-gray-400 text-sm">Notification email address</p>
-              <p className="text-gray-900 dark:text-gray-100 font-medium mt-2">{settings?.email}</p>
             </div>
           </div>
         </div>
