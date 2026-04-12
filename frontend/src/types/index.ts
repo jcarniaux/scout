@@ -1,6 +1,6 @@
 export interface Job {
   jobId: string;
-  roleName: string;
+  roleName: string | null;
   company: string;
   location: string;
   salaryMin: number | null;
@@ -9,14 +9,16 @@ export interface Job {
   sickDays: number | null;
   match401k: string | null;
   benefits: string | null;
-  postedDate: string;
-  sourceUrl: string;
-  source: 'linkedin' | 'indeed' | 'glassdoor' | 'ziprecruiter' | 'dice';
+  postedDate: string | null;
+  sourceUrl: string | null;
+  source: string;
   glassdoorRating: number | null;
   glassdoorUrl: string | null;
-  createdAt: string;
-  applicationStatus?: ApplicationStatus;
-  notes?: string;
+  createdAt: string | null;
+  description: string | null;
+  jobType: string | null;
+  applicationStatus: ApplicationStatus;
+  notes: string | null;
 }
 
 export type ApplicationStatus =
@@ -30,14 +32,14 @@ export type ApplicationStatus =
 
 export type DateRange = '24h' | '7d' | '30d';
 
-export type JobSource = 'linkedin' | 'indeed' | 'dice';
+export type JobSource = 'linkedin' | 'indeed' | 'dice' | 'glassdoor' | 'ziprecruiter';
 
 export interface JobFilters {
   dateRange?: DateRange;
   status?: ApplicationStatus;
   search?: string;
   sort?: 'date' | 'salary' | 'rating';
-  sources?: JobSource[];
+  sources?: string[];
 }
 
 export interface SearchLocation {

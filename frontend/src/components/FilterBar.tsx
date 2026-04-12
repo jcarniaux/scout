@@ -30,9 +30,11 @@ export function FilterBar({ filters, onFiltersChange, activeFilterCount }: Filte
   const dateRangeLabels: Record<DateRange, string> = { '24h': '24h', '7d': '7d', '30d': '30d' };
 
   const sourceOptions: Array<{ value: JobSource; label: string }> = [
-    { value: 'linkedin', label: 'LinkedIn' },
-    { value: 'indeed',   label: 'Indeed'   },
-    { value: 'dice',     label: 'Dice'     },
+    { value: 'linkedin',     label: 'LinkedIn'     },
+    { value: 'indeed',       label: 'Indeed'       },
+    { value: 'dice',         label: 'Dice'         },
+    { value: 'glassdoor',    label: 'Glassdoor'    },
+    { value: 'ziprecruiter', label: 'ZipRecruiter' },
   ];
 
   const sortOptions: Array<{ value: 'date' | 'salary' | 'rating'; label: string }> = [

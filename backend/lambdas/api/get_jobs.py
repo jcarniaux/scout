@@ -1,8 +1,10 @@
 """
 GET /jobs and GET /jobs/{jobId} API handlers.
 """
+import json
 import logging
 import os
+from base64 import b64decode, b64encode
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 
@@ -14,6 +16,13 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 dynamodb = DynamoDBHelper()
+
+# Safety cap: maximum items to fetch from DynamoDB per request.
+# Prevents unbounded reads if the dataset grows unexpectedly.
+MAX_ITEMS_CAP = 2000
+
+# DynamoDB page size per query call — controls memory per iteration.
+DDB_PAGE_SIZE = 200
 
 
 def get_user_sub(event: Dict[str, Any]) -> Optional[str]:
@@ -88,51 +97,63 @@ def serialize_job(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def filter_jobs(
-    jobs: List[Dict[str, Any]],
-    user_id: str,
-    status_filter: Optional[str] = None,
-    sort_by: str = "date",
-    sources: Optional[List[str]] = None,
-) -> List[Dict[str, Any]]:
+def _load_user_statuses(user_id: str) -> Dict[str, str]:
     """
-    Filter and sort jobs.
-
-    Args:
-        jobs: List of job dicts
-        user_id: User ID for status lookup
-        status_filter: Filter by application status
-        sort_by: Sort field (date, salary, rating)
+    Load all application statuses for a user in a single query.
 
     Returns:
-        Filtered and sorted job list
+        Dict mapping job_hash → status string
     """
-    jobs_table = os.environ.get("USER_STATUS_TABLE")
+    user_status_table = os.environ.get("USER_STATUS_TABLE")
+    if not user_status_table:
+        return {}
 
-    # Fetch user statuses if filtering by status
-    user_statuses = {}
-    if status_filter or jobs:
-        try:
-            items, _ = dynamodb.query(
-                jobs_table,
+    statuses: Dict[str, str] = {}
+    try:
+        last_key = None
+        while True:
+            items, last_key = dynamodb.query(
+                user_status_table,
                 "pk = :pk",
                 {":pk": user_id},
+                exclusive_start_key=last_key,
             )
             for item in items:
                 job_id = item.get("sk", "").replace("JOB#", "")
-                user_statuses[job_id] = item.get("status")
-        except Exception as e:
-            logger.warning(f"Error fetching user statuses: {e}")
+                statuses[job_id] = item.get("status", "NOT_APPLIED")
+            if not last_key:
+                break
+    except Exception as e:
+        logger.warning(f"Error fetching user statuses: {e}")
 
-    # Filter
+    return statuses
+
+
+def _attach_statuses_and_filter(
+    jobs: List[Dict[str, Any]],
+    user_statuses: Dict[str, str],
+    status_filter: Optional[str] = None,
+    sources: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Attach user statuses to jobs and apply source/status filters.
+
+    Args:
+        jobs: Deserialized job dicts
+        user_statuses: Pre-loaded status map (job_hash → status)
+        status_filter: Optional status to filter by
+        sources: Optional list of source platforms to include
+
+    Returns:
+        Filtered job list with user_status attached
+    """
     filtered = []
     for job in jobs:
         # Filter by source platform
-        if sources:
-            if job.get("source", "").lower() not in sources:
-                continue
+        if sources and job.get("source", "").lower() not in sources:
+            continue
 
-        # Attach user status — default to NOT_APPLIED when no DynamoDB entry exists
+        # Attach user status
         job_hash = job.get("job_hash")
         if not job_hash:
             pk = job.get("pk", "")
@@ -140,22 +161,24 @@ def filter_jobs(
         job["user_status"] = user_statuses.get(job_hash) or "NOT_APPLIED"
 
         # Filter by status
-        if status_filter:
-            if job["user_status"] != status_filter:
-                continue
+        if status_filter and job["user_status"] != status_filter:
+            continue
 
         filtered.append(job)
 
-    # Sort
-    if sort_by == "salary" and all(job.get("salary_min") for job in filtered):
-        filtered.sort(key=lambda x: x.get("salary_min", 0) or 0, reverse=True)
-    elif sort_by == "rating" and any(job.get("rating") for job in filtered):
-        filtered.sort(key=lambda x: x.get("rating", 0) or 0, reverse=True)
-    else:
-        # Default: sort by date
-        filtered.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-
     return filtered
+
+
+def _sort_jobs(jobs: List[Dict[str, Any]], sort_by: str) -> List[Dict[str, Any]]:
+    """Sort jobs by the specified field. Mutates and returns the list."""
+    if sort_by == "salary":
+        jobs.sort(key=lambda x: x.get("salary_min", 0) or 0, reverse=True)
+    elif sort_by == "rating":
+        jobs.sort(key=lambda x: x.get("rating", 0) or 0, reverse=True)
+    else:
+        # Default: sort by date (postedDate → created_at fallback)
+        jobs.sort(key=lambda x: x.get("postedDate") or x.get("created_at", ""), reverse=True)
+    return jobs
 
 
 def get_single_job(
@@ -208,7 +231,18 @@ def get_single_job(
 def list_jobs(
     event: Dict[str, Any], context: Any
 ) -> Dict[str, Any]:
-    """Handler for GET /jobs with filtering and pagination"""
+    """
+    Handler for GET /jobs with filtering and pagination.
+
+    Uses windowed DynamoDB fetching: queries in controlled pages
+    (DDB_PAGE_SIZE items at a time) instead of loading the entire
+    dataset into memory. Applies client-side filters progressively
+    and stops once we have enough results for the requested page.
+
+    For accurate total counts (needed by the pagination UI), we
+    continue fetching beyond the current page. A safety cap
+    (MAX_ITEMS_CAP) prevents unbounded reads.
+    """
     user_sub = get_user_sub(event)
     if not user_sub:
         return unauthorized_response("Unauthorized")
@@ -223,23 +257,30 @@ def list_jobs(
         date_range = query_params.get("dateRange", "30d")
         status_filter = query_params.get("status")
         sort_by = query_params.get("sort", "date")
-        page = int(query_params.get("page", "1"))
-        page_size = int(query_params.get("pageSize", "20"))
+        page = max(1, int(query_params.get("page", "1")))
+        page_size = min(50, max(1, int(query_params.get("pageSize", "20"))))
         raw_sources = query_params.get("sources", "")
         sources = [s.strip().lower() for s in raw_sources.split(",") if s.strip()] if raw_sources else None
 
-        # Calculate offset
+        # Calculate how many filtered items we need
         offset = (page - 1) * page_size
+        items_needed = offset + page_size + 1  # +1 to detect hasMore
 
-        # Query jobs by date
         start_date = get_date_range_start(date_range)
 
-        # DateIndex: hash_key=gsi1pk ("JOB"), range_key=postedDate
-        # All jobs share gsi1pk="JOB" so we can query the full date range.
-        # Paginate through the FULL result set so the total count is accurate.
-        # At Scout's scale (hundreds of jobs, not millions) this is fine.
-        all_items: list = []
+        # Pre-fetch user statuses in a single query (avoids N+1)
+        user_id = f"USER#{user_sub}"
+        user_statuses = _load_user_statuses(user_id)
+
+        # ── Windowed DynamoDB fetching ──
+        # When no re-sorting is needed (default date sort uses the GSI's
+        # native order), we can stop fetching as soon as we have enough
+        # filtered results. For salary/rating sorts, we need all items.
+        needs_full_fetch = sort_by in ("salary", "rating") or status_filter is not None
+        filtered_jobs: List[Dict[str, Any]] = []
+        total_ddb_items = 0
         last_key = None
+
         while True:
             items, last_key = dynamodb.query(
                 jobs_table,
@@ -247,31 +288,66 @@ def list_jobs(
                 {":pk": "JOB", ":start": start_date},
                 index_name="DateIndex",
                 scan_index_forward=False,
+                limit=DDB_PAGE_SIZE,
                 exclusive_start_key=last_key,
             )
-            all_items.extend(items)
+
+            if items:
+                deserialized = [dynamo_deserialize(item) for item in items]
+                total_ddb_items += len(deserialized)
+
+                batch_filtered = _attach_statuses_and_filter(
+                    deserialized, user_statuses,
+                    status_filter=status_filter, sources=sources,
+                )
+                filtered_jobs.extend(batch_filtered)
+
+            # Stop conditions
             if not last_key:
                 break
+            if total_ddb_items >= MAX_ITEMS_CAP:
+                logger.warning(
+                    f"Hit MAX_ITEMS_CAP ({MAX_ITEMS_CAP}) — results may be truncated"
+                )
+                break
+            # Early exit: if we don't need re-sorting and have enough results
+            if not needs_full_fetch and len(filtered_jobs) >= items_needed:
+                # We have enough for this page. Fetch one more DDB page to
+                # get a better total estimate, then stop.
+                if last_key:
+                    extra_items, extra_key = dynamodb.query(
+                        jobs_table,
+                        "gsi1pk = :pk AND postedDate >= :start",
+                        {":pk": "JOB", ":start": start_date},
+                        index_name="DateIndex",
+                        scan_index_forward=False,
+                        limit=DDB_PAGE_SIZE,
+                        exclusive_start_key=last_key,
+                    )
+                    if extra_items:
+                        extra_deserialized = [dynamo_deserialize(i) for i in extra_items]
+                        extra_filtered = _attach_statuses_and_filter(
+                            extra_deserialized, user_statuses,
+                            status_filter=status_filter, sources=sources,
+                        )
+                        filtered_jobs.extend(extra_filtered)
+                break
 
-        # Deserialize, filter, then map to frontend shape
-        jobs = [dynamo_deserialize(item) for item in all_items]
-        filtered_jobs = filter_jobs(
-            jobs,
-            f"USER#{user_sub}",
-            status_filter=status_filter,
-            sort_by=sort_by,
-            sources=sources,
-        )
+        # Sort (only needed for non-date sorts; date sort comes from GSI order)
+        if sort_by in ("salary", "rating"):
+            _sort_jobs(filtered_jobs, sort_by)
 
         # Paginate and serialize to frontend camelCase shape
-        paginated_jobs = [serialize_job(j) for j in filtered_jobs[offset : offset + page_size]]
+        total = len(filtered_jobs)
+        page_slice = filtered_jobs[offset : offset + page_size]
+        paginated_jobs = [serialize_job(j) for j in page_slice]
 
         return success_response({
             "jobs": paginated_jobs,
-            "total": len(filtered_jobs),
+            "total": total,
             "page": page,
             "pageSize": page_size,
-            "hasMore": len(filtered_jobs) > offset + page_size,
+            "hasMore": total > offset + page_size,
         })
 
     except ValueError as e:

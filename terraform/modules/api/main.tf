@@ -134,6 +134,7 @@ resource "aws_lambda_function" "patch_job_status" {
   environment {
     variables = {
       USER_STATUS_TABLE = var.dynamodb_user_status_table_name
+      SITE_URL          = "https://${var.subdomain}.${var.domain_name}"
     }
   }
 
@@ -155,6 +156,7 @@ resource "aws_lambda_function" "get_user_settings" {
   environment {
     variables = {
       USERS_TABLE = var.dynamodb_users_table_name
+      SITE_URL    = "https://${var.subdomain}.${var.domain_name}"
     }
   }
 

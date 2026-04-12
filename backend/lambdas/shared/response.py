@@ -2,6 +2,7 @@
 API Gateway Lambda proxy response helpers for Scout backend.
 """
 import json
+import logging
 import os
 from typing import Any, Dict
 
@@ -10,10 +11,19 @@ def get_cors_headers() -> Dict[str, str]:
     """
     Get CORS headers for API Gateway responses.
 
+    SITE_URL must be set in each Lambda's environment variables.
+    Falls back to rejecting cross-origin requests (empty origin)
+    rather than allowing all origins with '*'.
+
     Returns:
         Dict with CORS headers
     """
-    site_url = os.environ.get("SITE_URL", "*")
+    site_url = os.environ.get("SITE_URL", "")
+    if not site_url:
+        logging.getLogger().warning(
+            "SITE_URL environment variable not set — CORS origin will be empty. "
+            "Set SITE_URL to the frontend URL (e.g. https://scout.carniaux.io)."
+        )
     return {
         "Access-Control-Allow-Origin": site_url,
         "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",

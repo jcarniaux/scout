@@ -41,16 +41,25 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return {"statusCode": 500, "error": "Missing environment variables"}
 
     try:
-        # Get jobs from last 24 hours
-        start_date = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+        # Get jobs from last 24 hours using DateIndex (gsi1pk + postedDate)
+        start_date = (datetime.utcnow() - timedelta(hours=24)).date().isoformat()
 
-        jobs, _ = dynamodb.query(
-            jobs_table,
-            "created_at >= :start",
-            {":start": start_date},
-            index_name="DateIndex",
-            scan_index_forward=False,
-        )
+        all_jobs: list = []
+        last_key = None
+        while True:
+            items, last_key = dynamodb.query(
+                jobs_table,
+                "gsi1pk = :pk AND postedDate >= :start",
+                {":pk": "JOB", ":start": start_date},
+                index_name="DateIndex",
+                scan_index_forward=False,
+                exclusive_start_key=last_key,
+            )
+            all_jobs.extend(items)
+            if not last_key:
+                break
+
+        jobs = all_jobs
 
         if not jobs:
             logger.info("No new jobs in the last 24 hours")
