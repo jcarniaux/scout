@@ -212,7 +212,7 @@ class DynamoDBHelper:
         """
         try:
             table = self.get_table(table_name)
-            with table.batch_writer(batch_size=25) as batch:
+            with table.batch_writer() as batch:
                 for item in items_to_put:
                     batch.put_item(Item=item)
                 if items_to_delete:
