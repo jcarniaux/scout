@@ -91,7 +91,6 @@ def serialize_job(item: Dict[str, Any]) -> Dict[str, Any]:
 def filter_jobs(
     jobs: List[Dict[str, Any]],
     user_id: str,
-    min_rating: Optional[float] = None,
     status_filter: Optional[str] = None,
     sort_by: str = "date",
     sources: Optional[List[str]] = None,
@@ -102,7 +101,6 @@ def filter_jobs(
     Args:
         jobs: List of job dicts
         user_id: User ID for status lookup
-        min_rating: Minimum Glassdoor rating
         status_filter: Filter by application status
         sort_by: Sort field (date, salary, rating)
 
@@ -132,11 +130,6 @@ def filter_jobs(
         # Filter by source platform
         if sources:
             if job.get("source", "").lower() not in sources:
-                continue
-
-        # Filter by rating
-        if min_rating is not None and job.get("rating"):
-            if float(job["rating"]) < min_rating:
                 continue
 
         # Filter by status
@@ -226,16 +219,12 @@ def list_jobs(
         # Parse query parameters
         query_params = event.get("queryStringParameters", {}) or {}
         date_range = query_params.get("dateRange", "30d")
-        min_rating = query_params.get("minRating")
         status_filter = query_params.get("status")
         sort_by = query_params.get("sort", "date")
         page = int(query_params.get("page", "1"))
         page_size = int(query_params.get("pageSize", "20"))
         raw_sources = query_params.get("sources", "")
         sources = [s.strip().lower() for s in raw_sources.split(",") if s.strip()] if raw_sources else None
-
-        if min_rating:
-            min_rating = float(min_rating)
 
         # Calculate offset
         offset = (page - 1) * page_size
@@ -267,7 +256,6 @@ def list_jobs(
         filtered_jobs = filter_jobs(
             jobs,
             f"USER#{user_sub}",
-            min_rating=min_rating,
             status_filter=status_filter,
             sort_by=sort_by,
             sources=sources,

@@ -26,7 +26,6 @@ export const api = {
   getJobs: async (filters: JobFilters, page = 1, pageSize = 20): Promise<PaginatedResponse<Job>> => {
     const params = new URLSearchParams();
     if (filters.dateRange)           params.set('dateRange', filters.dateRange);
-    if (filters.minRating)           params.set('minRating', String(filters.minRating));
     if (filters.status)              params.set('status', filters.status);
     if (filters.search)              params.set('search', filters.search);
     if (filters.sort)                params.set('sort', filters.sort);

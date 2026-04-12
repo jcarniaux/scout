@@ -19,7 +19,6 @@ export function Dashboard() {
       : undefined;
     return {
       dateRange:  (searchParams.get('dateRange') as DateRange) || undefined,
-      minRating:  searchParams.get('minRating') ? parseFloat(searchParams.get('minRating')!) : undefined,
       status:     (searchParams.get('status') as ApplicationStatus) || undefined,
       search:     searchParams.get('search') || undefined,
       sort:       (searchParams.get('sort') as JobFilters['sort']) || 'date',
@@ -30,7 +29,6 @@ export function Dashboard() {
   const updateFilters = (newFilters: JobFilters) => {
     const params = new URLSearchParams();
     if (newFilters.dateRange)                params.set('dateRange', newFilters.dateRange);
-    if (newFilters.minRating)                params.set('minRating', String(newFilters.minRating));
     if (newFilters.status)                   params.set('status', newFilters.status);
     if (newFilters.search)                   params.set('search', newFilters.search);
     if (newFilters.sort)                     params.set('sort', newFilters.sort);

@@ -34,7 +34,6 @@ export type JobSource = 'linkedin' | 'indeed' | 'dice';
 
 export interface JobFilters {
   dateRange?: DateRange;
-  minRating?: number;
   status?: ApplicationStatus;
   search?: string;
   sort?: 'date' | 'salary' | 'rating';

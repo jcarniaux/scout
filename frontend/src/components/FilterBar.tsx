@@ -163,24 +163,6 @@ export function FilterBar({ filters, onFiltersChange, activeFilterCount }: Filte
           </select>
         </div>
 
-        {/* Min Rating — spans both columns */}
-        <div className="sm:col-span-2">
-          <label className={labelClass}>
-            Min Glassdoor Rating: <span className="text-gray-700 dark:text-gray-200">{filters.minRating?.toFixed(1) ?? 'Any'}</span>
-          </label>
-          <input
-            type="range"
-            min="1"
-            max="5"
-            step="0.5"
-            value={filters.minRating || 1}
-            onChange={(e) => {
-              const val = parseFloat(e.target.value);
-              updateFilter('minRating', val === 1 ? undefined : val);
-            }}
-            className="w-full accent-primary"
-          />
-        </div>
       </div>
     </div>
   );
