@@ -14,6 +14,7 @@ import requests
 
 from shared.db import DynamoDBHelper
 from shared.models import dynamo_serialize
+from shared.crawler_utils import meets_location_requirement
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -218,6 +219,12 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             job_url = body.get("job_url", "").strip()
             if not title or not job_url:
                 logger.warning(f"Skipping job with missing title or url: {body}")
+                total_errors += 1
+                continue
+
+            # Location filter — only store Atlanta/GA or remote jobs
+            if not meets_location_requirement(location):
+                logger.info(f"Skipping out-of-area job: '{title}' at '{location}'")
                 total_errors += 1
                 continue
 

@@ -190,6 +190,48 @@ def normalize_location(location: str) -> str:
     return cleaned
 
 
+def meets_location_requirement(location: Optional[str]) -> bool:
+    """
+    Check if a job's location is Atlanta/GA area or remote.
+
+    Accepts:
+    - Empty / None  — location parsing failed (common with Dice Phase 2);
+                      the crawler already searched with Atlanta or remote
+                      parameters, so these are assumed valid.
+    - Atlanta, GA, Georgia area
+    - Remote / work-from-home / hybrid (any US-based remote)
+    - "United States" / national listings (inherently open to remote)
+
+    Rejects:
+    - Named cities/states that are clearly not Atlanta or US-remote
+      (e.g. "Waterford, Ireland", "London, UK", "New York, NY")
+
+    Args:
+        location: Location string from crawler (may be empty)
+
+    Returns:
+        True if location is acceptable
+    """
+    if not location or location.strip().lower() in ("", "location unknown", "unknown"):
+        return True  # No location data — assume valid (see note above)
+
+    loc = location.lower()
+
+    # Atlanta / Georgia
+    if any(kw in loc for kw in ("atlanta", ", ga", "georgia", "ga,", "ga ")):
+        return True
+
+    # Remote / flexible work
+    if any(kw in loc for kw in ("remote", "work from home", "wfh", "hybrid", "anywhere")):
+        return True
+
+    # National / US-wide listings (effectively remote-eligible)
+    if any(kw in loc for kw in ("united states", "u.s.", "us,", ", us", "nationwide")):
+        return True
+
+    return False
+
+
 def meets_salary_requirement(salary_min: Optional[int], minimum_threshold: int = 180000) -> bool:
     """
     Check if a salary meets minimum requirement.
