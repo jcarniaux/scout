@@ -408,9 +408,14 @@ resource "aws_iam_role_policy" "purge_policy" {
         Effect = "Allow"
         Action = [
           "dynamodb:Scan",
-          "dynamodb:DeleteItem"
+          "dynamodb:DeleteItem",
+          "dynamodb:BatchWriteItem",
+          "dynamodb:Query"
         ]
-        Resource = var.dynamodb_user_status_table_arn
+        Resource = [
+          var.dynamodb_jobs_table_arn,
+          var.dynamodb_user_status_table_arn
+        ]
       }
     ]
   })
