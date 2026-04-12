@@ -140,15 +140,23 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "user_id": f"USER#{user_sub}",
         }
 
+        # Fetch existing record once (for email preservation + created_at)
+        existing = dynamodb.get_item(users_table, {"pk": f"USER#{user_sub}"})
+
+        # Preserve existing email when frontend sends empty string
         if email:
             item["email"] = email
+        elif existing and existing.get("email"):
+            item["email"] = existing["email"]
 
         item["daily_report"] = bool(daily_report)
         item["weekly_report"] = bool(weekly_report)
 
         # Search preferences (stored flat for DynamoDB simplicity)
-        item["role_queries"] = role_queries
-        item["search_locations"] = validated_locations
+        if role_queries:
+            item["role_queries"] = role_queries
+        if validated_locations:
+            item["search_locations"] = validated_locations
         if salary_min is not None:
             item["salary_min"] = salary_min
         if salary_max is not None:
@@ -156,8 +164,6 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         item["updated_at"] = datetime.utcnow().isoformat()
 
-        # Check if this is first creation
-        existing = dynamodb.get_item(users_table, {"pk": f"USER#{user_sub}"})
         if not existing:
             item["created_at"] = datetime.utcnow().isoformat()
 

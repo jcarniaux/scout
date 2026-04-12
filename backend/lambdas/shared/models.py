@@ -153,6 +153,8 @@ def dynamo_serialize(data: Dict[str, Any]) -> Dict[str, Any]:
         elif isinstance(v, dict):
             result[k] = dynamo_serialize(v)
         elif isinstance(v, list):
+            if not v:
+                continue  # DynamoDB does not allow empty sets or empty lists
             # Check if all items are strings (benefits, for example)
             if all(isinstance(item, str) for item in v):
                 result[k] = set(v)
