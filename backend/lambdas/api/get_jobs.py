@@ -94,6 +94,7 @@ def filter_jobs(
     min_rating: Optional[float] = None,
     status_filter: Optional[str] = None,
     sort_by: str = "date",
+    sources: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Filter and sort jobs.
@@ -128,6 +129,11 @@ def filter_jobs(
     # Filter
     filtered = []
     for job in jobs:
+        # Filter by source platform
+        if sources:
+            if job.get("source", "").lower() not in sources:
+                continue
+
         # Filter by rating
         if min_rating is not None and job.get("rating"):
             if float(job["rating"]) < min_rating:
@@ -225,6 +231,8 @@ def list_jobs(
         sort_by = query_params.get("sort", "date")
         page = int(query_params.get("page", "1"))
         page_size = int(query_params.get("pageSize", "20"))
+        raw_sources = query_params.get("sources", "")
+        sources = [s.strip().lower() for s in raw_sources.split(",") if s.strip()] if raw_sources else None
 
         if min_rating:
             min_rating = float(min_rating)
@@ -262,6 +270,7 @@ def list_jobs(
             min_rating=min_rating,
             status_filter=status_filter,
             sort_by=sort_by,
+            sources=sources,
         )
 
         # Paginate and serialize to frontend camelCase shape

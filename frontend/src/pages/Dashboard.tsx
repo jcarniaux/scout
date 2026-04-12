@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { JobFilters, DateRange, ApplicationStatus } from '@/types';
+import { JobFilters, JobSource, DateRange, ApplicationStatus } from '@/types';
 import { useJobs } from '@/hooks/useJobs';
 import { FilterBar } from '@/components/FilterBar';
 import { JobList } from '@/components/JobList';
@@ -12,27 +12,37 @@ export function Dashboard() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
-  const filters: JobFilters = useMemo(() => ({
-    dateRange:  (searchParams.get('dateRange') as DateRange) || undefined,
-    minRating:  searchParams.get('minRating') ? parseFloat(searchParams.get('minRating')!) : undefined,
-    status:     (searchParams.get('status') as ApplicationStatus) || undefined,
-    search:     searchParams.get('search') || undefined,
-    sort:       (searchParams.get('sort') as JobFilters['sort']) || 'date',
-  }), [searchParams]);
+  const filters: JobFilters = useMemo(() => {
+    const rawSources = searchParams.get('sources');
+    const sources = rawSources
+      ? (rawSources.split(',').filter(Boolean) as JobSource[])
+      : undefined;
+    return {
+      dateRange:  (searchParams.get('dateRange') as DateRange) || undefined,
+      minRating:  searchParams.get('minRating') ? parseFloat(searchParams.get('minRating')!) : undefined,
+      status:     (searchParams.get('status') as ApplicationStatus) || undefined,
+      search:     searchParams.get('search') || undefined,
+      sort:       (searchParams.get('sort') as JobFilters['sort']) || 'date',
+      sources,
+    };
+  }, [searchParams]);
 
   const updateFilters = (newFilters: JobFilters) => {
     const params = new URLSearchParams();
-    if (newFilters.dateRange) params.set('dateRange', newFilters.dateRange);
-    if (newFilters.minRating) params.set('minRating', String(newFilters.minRating));
-    if (newFilters.status)    params.set('status', newFilters.status);
-    if (newFilters.search)    params.set('search', newFilters.search);
-    if (newFilters.sort)      params.set('sort', newFilters.sort);
+    if (newFilters.dateRange)                params.set('dateRange', newFilters.dateRange);
+    if (newFilters.minRating)                params.set('minRating', String(newFilters.minRating));
+    if (newFilters.status)                   params.set('status', newFilters.status);
+    if (newFilters.search)                   params.set('search', newFilters.search);
+    if (newFilters.sort)                     params.set('sort', newFilters.sort);
+    if (newFilters.sources?.length)          params.set('sources', newFilters.sources.join(','));
     setSearchParams(params);
     setCurrentPage(1);
   };
 
   const { data, isLoading, error, refetch } = useJobs(filters, currentPage, pageSize);
-  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const activeFilterCount = Object.entries(filters).filter(([, v]) =>
+    v !== undefined && v !== 'date' && !(Array.isArray(v) && v.length === 0)
+  ).length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

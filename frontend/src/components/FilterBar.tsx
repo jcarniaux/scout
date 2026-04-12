@@ -1,4 +1,4 @@
-import { DateRange, JobFilters, ApplicationStatus } from '@/types';
+import { DateRange, JobFilters, JobSource, ApplicationStatus } from '@/types';
 import { X } from 'lucide-react';
 
 interface FilterBarProps {
@@ -27,6 +27,11 @@ export function FilterBar({ filters, onFiltersChange, activeFilterCount }: Filte
   const clearFilters = () => onFiltersChange({});
 
   const dateRangeOptions: DateRange[] = ['24h', '7d', '30d'];
+  const sourceOptions: Array<{ value: JobSource; label: string }> = [
+    { value: 'linkedin',  label: 'LinkedIn' },
+    { value: 'indeed',    label: 'Indeed'   },
+    { value: 'dice',      label: 'Dice'     },
+  ];
   const sortOptions: Array<{ value: 'date' | 'salary' | 'rating'; label: string }> = [
     { value: 'date',   label: 'Most Recent' },
     { value: 'salary', label: 'Highest Salary' },
@@ -81,6 +86,36 @@ export function FilterBar({ filters, onFiltersChange, activeFilterCount }: Filte
                 {range === '24h' ? 'Last 24h' : range === '7d' ? 'Last 7 Days' : 'Last 30 Days'}
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Source Platform */}
+        <div>
+          <label className={labelClass}>Source</label>
+          <div className="flex flex-wrap gap-2">
+            {sourceOptions.map(({ value, label }) => {
+              const active = (filters.sources ?? []).includes(value);
+              const toggle = () => {
+                const current = filters.sources ?? [];
+                const next = active
+                  ? current.filter((s) => s !== value)
+                  : [...current, value];
+                onFiltersChange({ ...filters, sources: next.length ? next : undefined });
+              };
+              return (
+                <button
+                  key={value}
+                  onClick={toggle}
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                    active
+                      ? 'bg-primary text-white'
+                      : 'bg-slate-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-slate-200 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
