@@ -56,8 +56,8 @@ export function Dashboard() {
                 </span>
               )}
             </h1>
-            {data && data.items.length > 0 && (() => {
-              const d = new Date(data.items[0].createdAt);
+            {data && data.items.length > 0 && data.items[0].createdAt && (() => {
+              const d = new Date(data.items[0].createdAt!);
               return !isNaN(d.getTime()) ? (
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                   Last updated {formatDistanceToNow(d, { addSuffix: true })}

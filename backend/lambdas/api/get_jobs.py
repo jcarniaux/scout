@@ -1,10 +1,8 @@
 """
 GET /jobs and GET /jobs/{jobId} API handlers.
 """
-import json
 import logging
 import os
-from base64 import b64decode, b64encode
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 
