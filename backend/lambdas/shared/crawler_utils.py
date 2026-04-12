@@ -225,9 +225,19 @@ def meets_location_requirement(location: Optional[str]) -> bool:
     if any(kw in loc for kw in ("remote", "work from home", "wfh", "hybrid", "anywhere")):
         return True
 
-    # National / US-wide listings (effectively remote-eligible)
-    if any(kw in loc for kw in ("united states", "u.s.", "us,", ", us", "nationwide")):
-        return True
+    # "United States" only passes when it's a national/remote listing, NOT when
+    # it's a city/state suffix on an in-person job (e.g. "Nebraska, United States").
+    # Strategy: strip "united states" from the string and check what's left.
+    # If the remainder is empty, "remote", or Atlanta/GA, it's valid.
+    # If the remainder is a specific non-matching city/state, it's in-person elsewhere.
+    for us_kw in ("united states", "u.s.", "nationwide"):
+        if us_kw in loc:
+            prefix = loc.replace(us_kw, "").strip(" ,")
+            if not prefix:
+                return True  # Just "United States" — national/remote listing
+            if any(kw in prefix for kw in ("remote", "atlanta", ", ga", "georgia", "wfh", "anywhere")):
+                return True  # "Remote, United States" or "Atlanta, GA, United States"
+            # Has a specific non-matching location prefix → in-person elsewhere → reject
 
     return False
 
