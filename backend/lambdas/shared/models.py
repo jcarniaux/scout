@@ -37,8 +37,8 @@ LOCATIONS = [
     {"location": "United States", "distance": None, "remote": True},
 ]
 
-# Salary minimum threshold
-SALARY_MINIMUM = 180000
+# Salary minimum threshold (0 = no filter; users set their own via Settings)
+SALARY_MINIMUM = 0
 
 
 @dataclass

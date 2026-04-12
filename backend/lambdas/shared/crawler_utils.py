@@ -242,7 +242,7 @@ def meets_location_requirement(location: Optional[str]) -> bool:
     return False
 
 
-def meets_salary_requirement(salary_min: Optional[int], minimum_threshold: int = 180000) -> bool:
+def meets_salary_requirement(salary_min: Optional[int], minimum_threshold: int = 0) -> bool:
     """
     Check if a salary meets minimum requirement.
 

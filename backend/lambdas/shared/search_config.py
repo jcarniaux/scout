@@ -17,9 +17,11 @@ from shared.db import DynamoDBHelper
 from shared.models import (
     ROLE_QUERIES as DEFAULT_ROLES,
     LOCATIONS as DEFAULT_LOCATIONS,
-    SALARY_MINIMUM as DEFAULT_SALARY_MIN,
     dynamo_deserialize,
 )
+
+# Default salary minimum is 0 (no filter) — users set their own threshold via Settings
+DEFAULT_SALARY_MIN = 0
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ def load_search_config() -> Dict[str, Any]:
         {
             "role_queries": ["Security Engineer", ...],
             "locations": [{"location": "Atlanta, GA", "distance": 25, "remote": False}, ...],
-            "salary_minimum": 180000,
+            "salary_minimum": 0,
         }
     """
     users_table = os.environ.get("USERS_TABLE")
