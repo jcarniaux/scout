@@ -59,7 +59,9 @@ export function JobCard({ job }: JobCardProps) {
       {/* Row 2 — company · rating · source · location · date · salary · View Posting */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm mb-2">
         <span className="font-medium text-gray-700 dark:text-gray-200">{job.company}</span>
-        <RatingBadge rating={job.glassdoorRating} glassdoorUrl={job.glassdoorUrl} />
+        {job.glassdoorRating != null && (
+          <RatingBadge rating={job.glassdoorRating} glassdoorUrl={job.glassdoorUrl} />
+        )}
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${sourceClass}`}>
           {sourceLabel}
         </span>
