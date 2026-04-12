@@ -21,7 +21,7 @@ from urllib.parse import urlencode, quote_plus
 import boto3
 from bs4 import BeautifulSoup, Tag
 
-from shared.models import ROLE_QUERIES, LOCATIONS, SALARY_MINIMUM
+from shared.search_config import load_search_config
 from shared.crawler_utils import meets_salary_requirement
 from shared.oxylabs_client import OxylabsClient
 
@@ -395,12 +395,17 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         logger.error(f"Failed to init OxylabsClient: {e}")
         return {"statusCode": 500, "error": str(e)}
 
+    config = load_search_config()
+    role_queries = config["role_queries"]
+    locations = config["locations"]
+    salary_minimum = config["salary_minimum"]
+
     total_sent = 0
     total_errors = 0
     seen_urls: Set[str] = set()
 
-    for role in ROLE_QUERIES:
-        for location_config in LOCATIONS:
+    for role in role_queries:
+        for location_config in locations:
             location = location_config.get("location")
             distance = location_config.get("distance")
             is_remote = location_config.get("remote", False)
@@ -427,7 +432,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                             continue
                         seen_urls.add(job_url)
 
-                        if not meets_salary_requirement(job.get("salary_min"), SALARY_MINIMUM):
+                        if not meets_salary_requirement(job.get("salary_min"), salary_minimum):
                             continue
 
                         sqs_client.send_message(

@@ -1,5 +1,5 @@
 import { fetchAuthSession } from 'aws-amplify/auth';
-import { Job, JobFilters, PaginatedResponse, UserSettings, ApplicationStatus } from '@/types';
+import { Job, JobFilters, PaginatedResponse, UserSettings, SearchPreferences, ApplicationStatus } from '@/types';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -52,11 +52,61 @@ export const api = {
       body: JSON.stringify({ status, notes }),
     }),
 
-  getSettings: (): Promise<UserSettings> => authFetch('/user/settings'),
+  getSettings: async (): Promise<UserSettings> => {
+    const raw = await authFetch('/user/settings');
+    const sp = raw.search_preferences ?? {};
+    return {
+      email: raw.email ?? '',
+      dailyReport: raw.daily_report ?? false,
+      weeklyReport: raw.weekly_report ?? false,
+      searchPreferences: {
+        roleQueries: sp.role_queries ?? [],
+        locations: (sp.locations ?? []).map((l: any) => ({
+          location: l.location ?? '',
+          distance: l.distance ?? null,
+          remote: l.remote ?? false,
+        })),
+        salaryMin: sp.salary_min ?? null,
+        salaryMax: sp.salary_max ?? null,
+      },
+    };
+  },
 
-  updateSettings: (settings: UserSettings): Promise<UserSettings> =>
-    authFetch('/user/settings', {
+  updateSettings: async (settings: UserSettings): Promise<UserSettings> => {
+    const body = {
+      email: settings.email,
+      daily_report: settings.dailyReport,
+      weekly_report: settings.weeklyReport,
+      search_preferences: {
+        role_queries: settings.searchPreferences.roleQueries,
+        locations: settings.searchPreferences.locations.map((l) => ({
+          location: l.location,
+          distance: l.distance,
+          remote: l.remote,
+        })),
+        salary_min: settings.searchPreferences.salaryMin,
+        salary_max: settings.searchPreferences.salaryMax,
+      },
+    };
+    const raw = await authFetch('/user/settings', {
       method: 'PUT',
-      body: JSON.stringify(settings),
-    }),
+      body: JSON.stringify(body),
+    });
+    const sp = raw.search_preferences ?? {};
+    return {
+      email: raw.email ?? settings.email,
+      dailyReport: raw.daily_report ?? settings.dailyReport,
+      weeklyReport: raw.weekly_report ?? settings.weeklyReport,
+      searchPreferences: {
+        roleQueries: sp.role_queries ?? [],
+        locations: (sp.locations ?? []).map((l: any) => ({
+          location: l.location ?? '',
+          distance: l.distance ?? null,
+          remote: l.remote ?? false,
+        })),
+        salaryMin: sp.salary_min ?? null,
+        salaryMax: sp.salary_max ?? null,
+      },
+    };
+  },
 };

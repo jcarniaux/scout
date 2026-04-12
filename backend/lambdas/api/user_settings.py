@@ -33,6 +33,16 @@ def validate_email(email: str) -> bool:
     return re.match(pattern, email) is not None
 
 
+def _serialize_search_prefs(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract search preferences from a DynamoDB user item."""
+    return {
+        "role_queries": item.get("role_queries", []),
+        "locations": item.get("search_locations", []),
+        "salary_min": item.get("salary_min"),
+        "salary_max": item.get("salary_max"),
+    }
+
+
 def get_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Handler for GET /user/settings"""
     user_sub = get_user_sub(event)
@@ -53,6 +63,12 @@ def get_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "email": None,
                 "daily_report": False,
                 "weekly_report": False,
+                "search_preferences": {
+                    "role_queries": [],
+                    "locations": [],
+                    "salary_min": None,
+                    "salary_max": None,
+                },
             })
 
         item = dynamo_deserialize(item)
@@ -61,6 +77,7 @@ def get_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "email": item.get("email"),
             "daily_report": item.get("daily_report", False),
             "weekly_report": item.get("weekly_report", False),
+            "search_preferences": _serialize_search_prefs(item),
         })
 
     except Exception as e:
@@ -85,10 +102,37 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         email = body.get("email", "").strip()
         daily_report = body.get("daily_report", False)
         weekly_report = body.get("weekly_report", False)
+        search_prefs = body.get("search_preferences", {})
 
         # Validate
         if email and not validate_email(email):
             return error_response("Invalid email format", 400)
+
+        # Validate search preferences
+        role_queries = search_prefs.get("role_queries", [])
+        if not isinstance(role_queries, list):
+            return error_response("role_queries must be a list", 400)
+        role_queries = [r.strip() for r in role_queries if isinstance(r, str) and r.strip()]
+
+        locations = search_prefs.get("locations", [])
+        if not isinstance(locations, list):
+            return error_response("locations must be a list", 400)
+        # Each location: {"location": str, "distance": int|None, "remote": bool}
+        validated_locations = []
+        for loc in locations:
+            if isinstance(loc, dict) and loc.get("location"):
+                validated_locations.append({
+                    "location": str(loc["location"]).strip(),
+                    "distance": loc.get("distance"),
+                    "remote": bool(loc.get("remote", False)),
+                })
+
+        salary_min = search_prefs.get("salary_min")
+        salary_max = search_prefs.get("salary_max")
+        if salary_min is not None:
+            salary_min = int(salary_min)
+        if salary_max is not None:
+            salary_max = int(salary_max)
 
         # Build item
         item = {
@@ -101,6 +145,15 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         item["daily_report"] = bool(daily_report)
         item["weekly_report"] = bool(weekly_report)
+
+        # Search preferences (stored flat for DynamoDB simplicity)
+        item["role_queries"] = role_queries
+        item["search_locations"] = validated_locations
+        if salary_min is not None:
+            item["salary_min"] = salary_min
+        if salary_max is not None:
+            item["salary_max"] = salary_max
+
         item["updated_at"] = datetime.utcnow().isoformat()
 
         # Check if this is first creation
@@ -116,6 +169,12 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "email": item.get("email"),
             "daily_report": item["daily_report"],
             "weekly_report": item["weekly_report"],
+            "search_preferences": {
+                "role_queries": role_queries,
+                "locations": validated_locations,
+                "salary_min": salary_min,
+                "salary_max": salary_max,
+            },
             "updated_at": item["updated_at"],
         })
 

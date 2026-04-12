@@ -41,10 +41,24 @@ export interface JobFilters {
   sources?: JobSource[];
 }
 
+export interface SearchLocation {
+  location: string;
+  distance: number | null;
+  remote: boolean;
+}
+
+export interface SearchPreferences {
+  roleQueries: string[];
+  locations: SearchLocation[];
+  salaryMin: number | null;
+  salaryMax: number | null;
+}
+
 export interface UserSettings {
   email: string;
   dailyReport: boolean;
   weeklyReport: boolean;
+  searchPreferences: SearchPreferences;
 }
 
 export interface PaginatedResponse<T> {

@@ -47,3 +47,13 @@ variable "dynamodb_glassdoor_cache_table_arn" {
   description = "DynamoDB Glassdoor cache table ARN"
   type        = string
 }
+
+variable "dynamodb_users_table_name" {
+  description = "DynamoDB users table name"
+  type        = string
+}
+
+variable "dynamodb_users_table_arn" {
+  description = "DynamoDB users table ARN"
+  type        = string
+}

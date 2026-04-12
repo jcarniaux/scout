@@ -144,6 +144,14 @@ resource "aws_iam_role_policy" "crawler_policy" {
           "secretsmanager:GetSecretValue"
         ]
         Resource = aws_secretsmanager_secret.scraper_keys.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:Scan",
+          "dynamodb:GetItem"
+        ]
+        Resource = var.dynamodb_users_table_arn
       }
     ]
   })
@@ -164,6 +172,7 @@ resource "aws_lambda_function" "crawler_linkedin" {
     variables = {
       SQS_QUEUE_URL = aws_sqs_queue.raw_jobs.url
       SECRETS_ARN   = aws_secretsmanager_secret.scraper_keys.arn
+      USERS_TABLE   = var.dynamodb_users_table_name
     }
   }
 
@@ -185,6 +194,7 @@ resource "aws_lambda_function" "crawler_indeed" {
     variables = {
       SQS_QUEUE_URL = aws_sqs_queue.raw_jobs.url
       SECRETS_ARN   = aws_secretsmanager_secret.scraper_keys.arn
+      USERS_TABLE   = var.dynamodb_users_table_name
     }
   }
 
@@ -248,6 +258,7 @@ resource "aws_lambda_function" "crawler_dice" {
     variables = {
       SQS_QUEUE_URL = aws_sqs_queue.raw_jobs.url
       SECRETS_ARN   = aws_secretsmanager_secret.scraper_keys.arn
+      USERS_TABLE   = var.dynamodb_users_table_name
     }
   }
 

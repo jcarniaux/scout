@@ -18,7 +18,7 @@ from typing import Dict, Any, Set
 import boto3
 from jobspy import scrape_jobs
 
-from shared.models import ROLE_QUERIES, LOCATIONS, SALARY_MINIMUM
+from shared.search_config import load_search_config
 from shared.crawler_utils import (
     extract_salary_min,
     extract_salary_max,
@@ -41,13 +41,18 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         logger.error("SQS_QUEUE_URL environment variable not set")
         return {"statusCode": 500, "error": "Missing SQS_QUEUE_URL"}
 
+    config = load_search_config()
+    role_queries = config["role_queries"]
+    locations = config["locations"]
+    salary_minimum = config["salary_minimum"]
+
     proxies = get_proxy_list()
     total_sent = 0
     total_errors = 0
     seen_urls: Set[str] = set()
 
-    for role in ROLE_QUERIES:
-        for location_config in LOCATIONS:
+    for role in role_queries:
+        for location_config in locations:
             location = location_config.get("location")
             distance = location_config.get("distance")
             is_remote = location_config.get("remote", False)
@@ -91,7 +96,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
                         salary_min = extract_salary_min(job)
 
-                        if not meets_salary_requirement(salary_min, SALARY_MINIMUM):
+                        if not meets_salary_requirement(salary_min, salary_minimum):
                             logger.debug(
                                 f"Skipping {job.get('title')} - salary too low: {salary_min}"
                             )

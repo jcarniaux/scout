@@ -98,6 +98,8 @@ module "crawl" {
   dynamodb_user_status_table_arn      = module.data.dynamodb_user_status_table_arn
   dynamodb_glassdoor_cache_table_name = module.data.dynamodb_glassdoor_cache_table_name
   dynamodb_glassdoor_cache_table_arn  = module.data.dynamodb_glassdoor_cache_table_arn
+  dynamodb_users_table_name           = module.data.dynamodb_users_table_name
+  dynamodb_users_table_arn            = module.data.dynamodb_users_table_arn
 
   depends_on = [module.data]
 }
