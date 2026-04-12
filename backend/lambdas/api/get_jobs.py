@@ -132,15 +132,14 @@ def filter_jobs(
             if job.get("source", "").lower() not in sources:
                 continue
 
+        # Attach user status — default to NOT_APPLIED when no DynamoDB entry exists
+        job_hash = job.get("job_hash")
+        job["user_status"] = user_statuses.get(job_hash) or "NOT_APPLIED"
+
         # Filter by status
         if status_filter:
-            job_hash = job.get("job_hash")
-            if user_statuses.get(job_hash) != status_filter:
+            if job["user_status"] != status_filter:
                 continue
-
-        # Attach user status
-        job_hash = job.get("job_hash")
-        job["user_status"] = user_statuses.get(job_hash, "NOT_APPLIED")
 
         filtered.append(job)
 
