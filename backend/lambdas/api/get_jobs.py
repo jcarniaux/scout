@@ -134,6 +134,9 @@ def filter_jobs(
 
         # Attach user status — default to NOT_APPLIED when no DynamoDB entry exists
         job_hash = job.get("job_hash")
+        if not job_hash:
+            pk = job.get("pk", "")
+            job_hash = pk[len("JOB#"):] if pk.startswith("JOB#") else pk
         job["user_status"] = user_statuses.get(job_hash) or "NOT_APPLIED"
 
         # Filter by status
