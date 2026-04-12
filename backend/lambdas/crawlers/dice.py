@@ -122,6 +122,24 @@ def _find_closest_text(link: Tag, tag_names: list[str], max_depth: int = 4) -> s
     return ""
 
 
+def _clean_dice_title(title: str) -> str:
+    """
+    Strip Dice-specific cruft from job titles.
+
+    Dice wraps titles as:
+      "View Details for Cloud Architect (088e607eb148c7e357d44e337ef87e50)"
+    We want just "Cloud Architect".
+    """
+    if not title:
+        return title
+    # Strip "View Details for " prefix (case-insensitive)
+    if title.lower().startswith("view details for "):
+        title = title[len("View Details for "):]
+    # Strip trailing hex hash in parentheses, e.g. " (088e607eb...)"
+    title = re.sub(r"\s*\([0-9a-fA-F]{20,}\)\s*$", "", title)
+    return title.strip()
+
+
 def _parse_jobs_from_html(html: str) -> List[Dict[str, Any]]:
     """
     Parse job listings from a Dice search results page.
@@ -235,6 +253,8 @@ def _parse_jobs_from_html(html: str) -> List[Dict[str, Any]]:
             salary_text = _extract_text_near(card, salary_selectors)
             salary_min, salary_max = _parse_salary(salary_text)
 
+            title = _clean_dice_title(title)
+
             if not title or not job_url:
                 continue
 
@@ -296,6 +316,8 @@ def _parse_jobs_from_html(html: str) -> List[Dict[str, Any]]:
                 if not title:
                     # Try aria-label or title attribute
                     title = link.get("aria-label", "") or link.get("title", "")
+
+                title = _clean_dice_title(title)
 
                 if not title:
                     continue
