@@ -1,5 +1,5 @@
 import { fetchAuthSession } from 'aws-amplify/auth';
-import { Job, JobFilters, PaginatedResponse, UserSettings, SearchPreferences, ApplicationStatus } from '@/types';
+import { Job, JobFilters, PaginatedResponse, UserSettings, SearchLocation, ApplicationStatus } from '@/types';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -61,7 +61,7 @@ export const api = {
       weeklyReport: raw.weekly_report ?? false,
       searchPreferences: {
         roleQueries: sp.role_queries ?? [],
-        locations: (sp.locations ?? []).map((l: any) => ({
+        locations: (sp.locations ?? []).map((l: Partial<SearchLocation>) => ({
           location: l.location ?? '',
           distance: l.distance ?? null,
           remote: l.remote ?? false,
@@ -99,7 +99,7 @@ export const api = {
       weeklyReport: raw.weekly_report ?? settings.weeklyReport,
       searchPreferences: {
         roleQueries: sp.role_queries ?? [],
-        locations: (sp.locations ?? []).map((l: any) => ({
+        locations: (sp.locations ?? []).map((l: Partial<SearchLocation>) => ({
           location: l.location ?? '',
           distance: l.distance ?? null,
           remote: l.remote ?? false,
