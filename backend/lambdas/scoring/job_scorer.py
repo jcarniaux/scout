@@ -84,18 +84,41 @@ def _score_job_for_user(job: Dict[str, Any], resume_text: str) -> Tuple[int, str
 
     # Ensure resume_text is a plain string (guard against Decimal/bytes stored in DynamoDB)
     resume_excerpt = str(resume_text)[:2000]
-    description_excerpt = str(job.get("description") or "")[:1500]
+    description_raw = str(job.get("description") or "").strip()
+    # Treat placeholder / junk values stored by crawlers as absent
+    if description_raw.lower() in ("none", "nan", "null", "n/a", ""):
+        description_raw = ""
+    description_excerpt = description_raw[:1500]
 
     # DynamoDB stores the title as "role_name"; fall back to "title" for forward compat
     job_title = job.get("role_name") or job.get("title") or ""
     company = job.get("company") or ""
+    location = job.get("location") or ""
+    contract_type = job.get("contract_type") or ""
+
+    # Build the job info block — only include fields that carry signal
+    job_info_lines = [f"Job Title: {job_title}", f"Company: {company}"]
+    if location:
+        job_info_lines.append(f"Location: {location}")
+    if contract_type:
+        job_info_lines.append(f"Contract Type: {contract_type}")
+
+    if description_excerpt:
+        job_info_lines.append(f"Description:\n{description_excerpt}")
+        description_note = ""
+    else:
+        description_note = (
+            "\nNote: No job description is available for this posting. "
+            "Base your score entirely on title, company, and any other signals above."
+        )
+
+    job_info = "\n".join(job_info_lines)
 
     prompt = (
         "Score this job posting against the candidate's resume on a 0-100 scale.\n\n"
         f"Resume:\n{resume_excerpt}\n\n"
-        f"Job Title: {job_title}\n"
-        f"Company: {company}\n"
-        f"Description:\n{description_excerpt}\n\n"
+        f"{job_info}"
+        f"{description_note}\n\n"
         'Return ONLY valid JSON with no other text: {"score": <integer 0-100>, "reasoning": "<one concise sentence>"}'
     )
 
