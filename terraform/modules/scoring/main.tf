@@ -251,7 +251,11 @@ resource "aws_iam_role_policy" "job_scorer_dynamodb" {
   })
 }
 
-# Scoped to Claude Haiku only — prevents accidental Sonnet/Opus invocations
+# Scoped to Claude Haiku only — prevents accidental Sonnet/Opus invocations.
+# aws-marketplace:ViewSubscriptions is required for the Lambda to verify that the
+# Bedrock model subscription is active; without it the first InvokeModel call on
+# a freshly-subscribed model returns AccessDeniedException even with the correct
+# bedrock:InvokeModel permission.
 resource "aws_iam_role_policy" "job_scorer_bedrock" {
   name = "${var.project_name}-job-scorer-bedrock"
   role = aws_iam_role.job_scorer_role.id
@@ -263,6 +267,13 @@ resource "aws_iam_role_policy" "job_scorer_bedrock" {
         Effect   = "Allow"
         Action   = ["bedrock:InvokeModel"]
         Resource = ["arn:aws:bedrock:${var.aws_region}::foundation-model/${var.bedrock_model_id}"]
+      },
+      {
+        # Required to verify the Bedrock model marketplace subscription is active.
+        # Read-only — does not allow subscribing to new models.
+        Effect   = "Allow"
+        Action   = ["aws-marketplace:ViewSubscriptions"]
+        Resource = ["*"]
       }
     ]
   })
