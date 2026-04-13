@@ -61,6 +61,12 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if status not in APPLICATION_STATUSES:
             return error_response(f"Invalid status. Must be one of: {', '.join(APPLICATION_STATUSES)}", 400)
 
+        if len(notes) > 500:
+            return error_response("Notes must be 500 characters or fewer", 400)
+
+        if len(job_id) > 128:
+            return error_response("Invalid jobId", 400)
+
         # Build item
         item = {
             "pk": f"USER#{user_sub}",

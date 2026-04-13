@@ -76,6 +76,7 @@ class DynamoDBHelper:
         key: Dict[str, Any],
         update_expression: str,
         expression_attribute_values: Dict[str, Any],
+        expression_attribute_names: Optional[Dict[str, str]] = None,
         condition_expression: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
@@ -86,6 +87,7 @@ class DynamoDBHelper:
             key: Primary key dict
             update_expression: DynamoDB UpdateExpression (e.g., "SET #status = :status")
             expression_attribute_values: Values for placeholders (e.g., {":status": "APPLIED"})
+            expression_attribute_names: Optional attribute name mappings for reserved words
             condition_expression: Optional conditional expression
 
         Returns:
@@ -99,6 +101,8 @@ class DynamoDBHelper:
                 "ExpressionAttributeValues": expression_attribute_values,
                 "ReturnValues": "ALL_NEW",
             }
+            if expression_attribute_names:
+                kwargs["ExpressionAttributeNames"] = expression_attribute_names
             if condition_expression:
                 kwargs["ConditionExpression"] = condition_expression
             response = table.update_item(**kwargs)

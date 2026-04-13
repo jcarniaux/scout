@@ -125,6 +125,12 @@ resource "aws_iam_role_policy_attachment" "crawler_basic_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+# X-Ray write access for crawler role
+resource "aws_iam_role_policy_attachment" "crawler_role_xray" {
+  role       = aws_iam_role.crawler_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
+}
+
 # Policy for crawlers to access SQS and Secrets Manager
 resource "aws_iam_role_policy" "crawler_policy" {
   name = "${var.project_name}-crawler-policy"
@@ -170,6 +176,10 @@ resource "aws_lambda_function" "crawler_linkedin" {
   timeout       = 900
   memory_size   = 512
 
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
       SQS_QUEUE_URL = aws_sqs_queue.raw_jobs.url
@@ -191,6 +201,10 @@ resource "aws_lambda_function" "crawler_indeed" {
   runtime       = "python3.12"
   timeout       = 900
   memory_size   = 512
+
+  tracing_config {
+    mode = "Active"
+  }
 
   environment {
     variables = {
@@ -214,6 +228,10 @@ resource "aws_lambda_function" "crawler_glassdoor" {
   timeout       = 900
   memory_size   = 512
 
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
       SQS_QUEUE_URL = aws_sqs_queue.raw_jobs.url
@@ -236,6 +254,10 @@ resource "aws_lambda_function" "crawler_ziprecruiter" {
   timeout       = 900
   memory_size   = 512
 
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
       SQS_QUEUE_URL = aws_sqs_queue.raw_jobs.url
@@ -257,6 +279,10 @@ resource "aws_lambda_function" "crawler_dice" {
   runtime       = "python3.12"
   timeout       = 900
   memory_size   = 512
+
+  tracing_config {
+    mode = "Active"
+  }
 
   environment {
     variables = {
@@ -281,6 +307,10 @@ resource "aws_lambda_function" "crawl_diagnose" {
   runtime       = "python3.12"
   timeout       = 900
   memory_size   = 512
+
+  tracing_config {
+    mode = "Active"
+  }
 
   environment {
     variables = {
@@ -314,6 +344,12 @@ resource "aws_iam_role" "enrichment_role" {
 resource "aws_iam_role_policy_attachment" "enrichment_basic_execution" {
   role       = aws_iam_role.enrichment_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# X-Ray write access for enrichment role
+resource "aws_iam_role_policy_attachment" "enrichment_role_xray" {
+  role       = aws_iam_role.enrichment_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
 }
 
 # Policy for enrichment Lambda
@@ -366,6 +402,10 @@ resource "aws_lambda_function" "enrichment_lambda" {
   timeout       = 300
   memory_size   = 512
 
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
       JOBS_TABLE            = var.dynamodb_jobs_table_name
@@ -411,6 +451,12 @@ resource "aws_iam_role_policy_attachment" "purge_basic_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+# X-Ray write access for purge role
+resource "aws_iam_role_policy_attachment" "purge_role_xray" {
+  role       = aws_iam_role.purge_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
+}
+
 # Policy for purge Lambda
 resource "aws_iam_role_policy" "purge_policy" {
   name = "${var.project_name}-purge-policy"
@@ -445,6 +491,10 @@ resource "aws_lambda_function" "purge_lambda" {
   runtime       = "python3.12"
   timeout       = 60
   memory_size   = 256
+
+  tracing_config {
+    mode = "Active"
+  }
 
   environment {
     variables = {

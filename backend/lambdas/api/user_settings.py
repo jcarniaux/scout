@@ -7,10 +7,11 @@ import logging
 import os
 import re
 from datetime import datetime
+from decimal import Decimal
 from typing import Dict, Any, Optional
 
 from shared.db import DynamoDBHelper
-from shared.models import dynamo_serialize, dynamo_deserialize
+from shared.models import dynamo_deserialize
 from shared.response import success_response, error_response, unauthorized_response
 
 logger = logging.getLogger()
@@ -107,22 +108,28 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Validate
         if email and not validate_email(email):
             return error_response("Invalid email format", 400)
+        if email and len(email) > 254:
+            return error_response("Email must be 254 characters or fewer", 400)
 
         # Validate search preferences
         role_queries = search_prefs.get("role_queries", [])
         if not isinstance(role_queries, list):
             return error_response("role_queries must be a list", 400)
-        role_queries = [r.strip() for r in role_queries if isinstance(r, str) and r.strip()]
+        if len(role_queries) > 50:
+            return error_response("Maximum 50 role queries allowed", 400)
+        role_queries = [r.strip()[:200] for r in role_queries if isinstance(r, str) and r.strip()]
 
         locations = search_prefs.get("locations", [])
         if not isinstance(locations, list):
             return error_response("locations must be a list", 400)
+        if len(locations) > 50:
+            return error_response("Maximum 50 locations allowed", 400)
         # Each location: {"location": str, "distance": int|None, "remote": bool}
         validated_locations = []
         for loc in locations:
             if isinstance(loc, dict) and loc.get("location"):
                 validated_locations.append({
-                    "location": str(loc["location"]).strip(),
+                    "location": str(loc["location"]).strip()[:200],
                     "distance": loc.get("distance"),
                     "remote": bool(loc.get("remote", False)),
                 })
@@ -134,54 +141,72 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if salary_max is not None:
             salary_max = int(salary_max)
 
-        # Build item
-        item = {
-            "pk": f"USER#{user_sub}",
-            "user_id": f"USER#{user_sub}",
+        now = datetime.utcnow().isoformat()
+
+        # Build SET expression dynamically — only touch provided fields
+        set_parts = [
+            "#uid = :uid",
+            "daily_report = :dr",
+            "weekly_report = :wr",
+            "updated_at = :now",
+        ]
+        attr_values: Dict[str, Any] = {
+            ":uid": f"USER#{user_sub}",
+            ":dr": bool(daily_report),
+            ":wr": bool(weekly_report),
+            ":now": now,
+        }
+        attr_names: Dict[str, str] = {
+            "#uid": "user_id",  # user_id is not reserved, but consistent alias style
         }
 
-        # Fetch existing record once (for email preservation + created_at)
-        existing = dynamodb.get_item(users_table, {"pk": f"USER#{user_sub}"})
-
-        # Preserve existing email when frontend sends empty string
+        # Email: only update when explicitly provided
         if email:
-            item["email"] = email
-        elif existing and existing.get("email"):
-            item["email"] = existing["email"]
+            set_parts.append("email = :email")
+            attr_values[":email"] = email
 
-        item["daily_report"] = bool(daily_report)
-        item["weekly_report"] = bool(weekly_report)
-
-        # Search preferences (stored flat for DynamoDB simplicity)
         if role_queries:
-            item["role_queries"] = role_queries
+            set_parts.append("role_queries = :rq")
+            attr_values[":rq"] = role_queries
+
         if validated_locations:
-            item["search_locations"] = validated_locations
+            set_parts.append("search_locations = :sl")
+            attr_values[":sl"] = validated_locations
+
         if salary_min is not None:
-            item["salary_min"] = salary_min
+            set_parts.append("salary_min = :smin")
+            attr_values[":smin"] = Decimal(str(salary_min))
+
         if salary_max is not None:
-            item["salary_max"] = salary_max
+            set_parts.append("salary_max = :smax")
+            attr_values[":smax"] = Decimal(str(salary_max))
 
-        item["updated_at"] = datetime.utcnow().isoformat()
+        # created_at — set only if the attribute doesn't already exist
+        set_parts.append("created_at = if_not_exists(created_at, :now)")
 
-        if not existing:
-            item["created_at"] = datetime.utcnow().isoformat()
+        update_expr = "SET " + ", ".join(set_parts)
 
-        # Write to DynamoDB
-        dynamodb.put_item(users_table, dynamo_serialize(item))
+        updated = dynamodb.update_item(
+            table_name=users_table,
+            key={"pk": f"USER#{user_sub}"},
+            update_expression=update_expr,
+            expression_attribute_values=attr_values,
+            expression_attribute_names=attr_names,
+        )
+        updated = dynamo_deserialize(updated)
 
         return success_response({
-            "user_id": item["pk"],
-            "email": item.get("email"),
-            "daily_report": item["daily_report"],
-            "weekly_report": item["weekly_report"],
+            "user_id": updated.get("pk"),
+            "email": updated.get("email"),
+            "daily_report": updated.get("daily_report", False),
+            "weekly_report": updated.get("weekly_report", False),
             "search_preferences": {
                 "role_queries": role_queries,
                 "locations": validated_locations,
                 "salary_min": salary_min,
                 "salary_max": salary_max,
             },
-            "updated_at": item["updated_at"],
+            "updated_at": now,
         })
 
     except json.JSONDecodeError:

@@ -129,4 +129,4 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Error in weekly report handler: {e}", exc_info=True)
-        return {"statusCode": 500, "error": str(e)}
+        return {"statusCode": 500, "error": "Internal error in weekly report"}

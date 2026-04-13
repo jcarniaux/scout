@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Authenticator } from '@aws-amplify/ui-react';
 import { Amplify } from 'aws-amplify';
 import amplifyConfig from './amplifyconfiguration';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Navbar } from '@/components/Navbar';
 import { Dashboard } from '@/pages/Dashboard';
 import { Settings } from '@/pages/Settings';
@@ -27,9 +28,11 @@ function AppContent() {
 
 export function App() {
   return (
-    <Authenticator>
-      <AppContent />
-    </Authenticator>
+    <ErrorBoundary>
+      <Authenticator>
+        <AppContent />
+      </Authenticator>
+    </ErrorBoundary>
   );
 }
 

@@ -252,5 +252,18 @@ resource "aws_route53_record" "cloudfront" {
   }
 }
 
+# Route53 AAAA alias record for IPv6 (CloudFront has is_ipv6_enabled = true)
+resource "aws_route53_record" "cloudfront_ipv6" {
+  zone_id = var.route53_zone_id
+  name    = "${var.subdomain}.${var.domain_name}"
+  type    = "AAAA"
+
+  alias {
+    name                   = aws_cloudfront_distribution.main.domain_name
+    zone_id                = aws_cloudfront_distribution.main.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
 # Data source for current AWS account
 data "aws_caller_identity" "current" {}

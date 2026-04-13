@@ -335,7 +335,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         client = OxylabsClient()
     except RuntimeError as e:
         logger.error(f"Failed to init OxylabsClient: {e}")
-        return {"statusCode": 500, "error": str(e)}
+        return {"statusCode": 500, "error": "Failed to initialize scraping client"}
 
     total_sent = 0
     total_errors = 0

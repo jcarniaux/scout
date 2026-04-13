@@ -42,6 +42,15 @@ resource "aws_api_gateway_authorizer" "cognito" {
   identity_source = "method.request.header.Authorization"
 }
 
+# Request validator — rejects requests with missing body on PATCH/PUT methods
+# before they reach Lambda, saving invocation cost and cold start budget.
+resource "aws_api_gateway_request_validator" "body" {
+  name                        = "validate-body"
+  rest_api_id                 = aws_api_gateway_rest_api.main.id
+  validate_request_body       = true
+  validate_request_parameters = true
+}
+
 # IAM role for Lambda execution
 resource "aws_iam_role" "lambda_role" {
   name = "${var.project_name}-api-lambda-role"
@@ -62,6 +71,12 @@ resource "aws_iam_role" "lambda_role" {
 resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
   role       = aws_iam_role.lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# X-Ray tracing permissions
+resource "aws_iam_role_policy_attachment" "lambda_xray" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
 }
 
 # DynamoDB access policy for Lambda
@@ -104,6 +119,10 @@ resource "aws_lambda_function" "get_jobs" {
   timeout       = 30
   memory_size   = 256
 
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
       JOBS_TABLE        = var.dynamodb_jobs_table_name
@@ -131,6 +150,10 @@ resource "aws_lambda_function" "patch_job_status" {
   timeout       = 30
   memory_size   = 256
 
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
       USER_STATUS_TABLE = var.dynamodb_user_status_table_name
@@ -152,6 +175,10 @@ resource "aws_lambda_function" "get_user_settings" {
   runtime       = "python3.12"
   timeout       = 30
   memory_size   = 256
+
+  tracing_config {
+    mode = "Active"
+  }
 
   environment {
     variables = {
@@ -274,11 +301,12 @@ resource "aws_api_gateway_resource" "job_status" {
 }
 
 resource "aws_api_gateway_method" "patch_job_status" {
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.job_status.id
-  http_method   = "PATCH"
-  authorization = "COGNITO_USER_POOLS"
-  authorizer_id = aws_api_gateway_authorizer.cognito.id
+  rest_api_id          = aws_api_gateway_rest_api.main.id
+  resource_id          = aws_api_gateway_resource.job_status.id
+  http_method          = "PATCH"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.body.id
   request_parameters = {
     "method.request.header.Authorization" = true
     "method.request.path.jobId"           = true
@@ -329,11 +357,12 @@ resource "aws_api_gateway_integration" "get_user_settings" {
 
 # PUT /user/settings
 resource "aws_api_gateway_method" "put_user_settings" {
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.user_settings.id
-  http_method   = "PUT"
-  authorization = "COGNITO_USER_POOLS"
-  authorizer_id = aws_api_gateway_authorizer.cognito.id
+  rest_api_id          = aws_api_gateway_rest_api.main.id
+  resource_id          = aws_api_gateway_resource.user_settings.id
+  http_method          = "PUT"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.body.id
   request_parameters = {
     "method.request.header.Authorization" = true
   }
