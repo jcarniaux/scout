@@ -18,6 +18,7 @@ from jobspy import scrape_jobs
 from shared.metrics import emit_metric
 from shared.search_config import load_search_config
 from shared.crawler_utils import (
+    clean_field,
     extract_salary_min,
     extract_salary_max,
     meets_salary_requirement,
@@ -83,6 +84,17 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
                 logger.info(f"Found {len(jobs_df)} jobs for {role} in {location}")
 
+                # Log available columns and first row for debugging
+                # company extraction issues (e.g. JobSpy version drift)
+                if len(jobs_df) > 0:
+                    logger.info(f"DataFrame columns: {list(jobs_df.columns)}")
+                    first = jobs_df.iloc[0]
+                    logger.info(
+                        f"Sample row — company={first.get('company')!r}, "
+                        f"company_name={first.get('company_name')!r}, "
+                        f"title={first.get('title')!r}"
+                    )
+
                 for idx, job in jobs_df.iterrows():
                     try:
                         job_url = str(job.get("job_url", "")).strip()
@@ -103,15 +115,15 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
                         message = {
                             "source": "linkedin",
-                            "title": str(job.get("title", "")).strip(),
-                            "company": str(job.get("company_name", "")).strip(),
-                            "location": str(job.get("location", "")).strip(),
+                            "title": clean_field(job.get("title")),
+                            "company": clean_field(job.get("company") or job.get("company_name")),
+                            "location": clean_field(job.get("location")),
                             "salary_min": salary_min,
                             "salary_max": salary_max,
                             "job_url": job_url,
-                            "date_posted": str(job.get("date_posted", "")).strip(),
-                            "description": str(job.get("description", ""))[:2000],
-                            "job_type": str(job.get("job_type", "")).strip(),
+                            "date_posted": clean_field(job.get("date_posted")),
+                            "description": clean_field(job.get("description"))[:2000],
+                            "job_type": clean_field(job.get("job_type")),
                             "crawled_at": datetime.utcnow().isoformat(),
                         }
 

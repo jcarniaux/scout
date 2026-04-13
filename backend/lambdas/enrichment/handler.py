@@ -268,8 +268,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 total_filtered += 1
                 continue
 
-            # Fall back to "Unknown" so the job is still stored and searchable
-            if not company:
+            # Fall back to "Unknown" so the job is still stored and searchable.
+            # JobSpy NaN values arrive as the string "nan" after str() coercion
+            # in the crawler — treat these the same as empty.
+            if not company or company.lower() in ("nan", "none", "null", "unknown"):
                 company = "Unknown"
 
             total_processed += 1

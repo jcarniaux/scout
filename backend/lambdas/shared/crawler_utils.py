@@ -171,6 +171,25 @@ def extract_salary_max(job: any) -> Optional[int]:
     return None
 
 
+def clean_field(value: any) -> str:
+    """
+    Sanitize a DataFrame cell to a clean string.
+
+    JobSpy returns Python NaN (float) for missing fields.  ``str(NaN)``
+    produces ``"nan"``; ``str(None)`` produces ``"None"``.  Both are
+    useless sentinel strings that should be treated as empty.
+
+    Returns:
+        Stripped string, or "" if the value is missing/NaN/None.
+    """
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if s.lower() in ("nan", "none", "null", ""):
+        return ""
+    return s
+
+
 def normalize_title(title: str) -> str:
     """Normalize job title to title case."""
     return title.strip().title() if title else ""
