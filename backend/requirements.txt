@@ -5,4 +5,4 @@ boto3~=1.42.88
 requests~=2.33.1
 beautifulsoup4~=4.14.3
 pydantic~=2.12.5
-pdfminer.six~=20221105
+pdfminer.six>=20221105
