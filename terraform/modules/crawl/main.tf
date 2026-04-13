@@ -13,6 +13,7 @@ resource "aws_sqs_queue" "raw_jobs" {
   name                       = "${var.project_name}-raw-jobs"
   visibility_timeout_seconds = 900
   message_retention_seconds  = 86400 # 1 day
+  sqs_managed_sse_enabled    = true
 
   tags = {
     Name = "${var.project_name}-raw-jobs"
@@ -21,7 +22,8 @@ resource "aws_sqs_queue" "raw_jobs" {
 
 # SQS Dead Letter Queue
 resource "aws_sqs_queue" "raw_jobs_dlq" {
-  name = "${var.project_name}-raw-jobs-dlq"
+  name                    = "${var.project_name}-raw-jobs-dlq"
+  sqs_managed_sse_enabled = true
 
   tags = {
     Name = "${var.project_name}-raw-jobs-dlq"
@@ -216,6 +218,7 @@ resource "aws_lambda_function" "crawler_glassdoor" {
     variables = {
       SQS_QUEUE_URL = aws_sqs_queue.raw_jobs.url
       SECRETS_ARN   = aws_secretsmanager_secret.scraper_keys.arn
+      USERS_TABLE   = var.dynamodb_users_table_name
     }
   }
 
@@ -237,6 +240,7 @@ resource "aws_lambda_function" "crawler_ziprecruiter" {
     variables = {
       SQS_QUEUE_URL = aws_sqs_queue.raw_jobs.url
       SECRETS_ARN   = aws_secretsmanager_secret.scraper_keys.arn
+      USERS_TABLE   = var.dynamodb_users_table_name
     }
   }
 

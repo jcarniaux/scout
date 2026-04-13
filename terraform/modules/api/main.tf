@@ -659,3 +659,95 @@ resource "aws_api_gateway_stage" "v1" {
 
   depends_on = [aws_api_gateway_deployment.main]
 }
+
+# ─── API Gateway Throttling ──────────────────────────────────────────────────
+# Applies to all methods on the v1 stage.  Burst = 50 (concurrent), Rate = 100/s.
+# For a handful of users this is generous; it exists to cap runaway bots/scripts
+# and protect downstream Lambda concurrency + DynamoDB capacity.
+resource "aws_api_gateway_method_settings" "all" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  stage_name  = aws_api_gateway_stage.v1.stage_name
+  method_path = "*/*"
+
+  settings {
+    throttling_burst_limit = 50
+    throttling_rate_limit  = 100
+    logging_level          = "ERROR"
+    data_trace_enabled     = false
+    metrics_enabled        = true
+  }
+}
+
+# ─── Regional WAF for API Gateway ────────────────────────────────────────────
+# The CloudFront WAF (in the frontend module) only protects the CDN.  Anyone
+# who discovers the API Gateway invoke URL can hit it directly.  This regional
+# WAFv2 WebACL attaches to the API stage to close that gap.
+resource "aws_wafv2_web_acl" "api" {
+  name  = "${var.project_name}-api-waf"
+  scope = "REGIONAL"
+
+  default_action {
+    allow {}
+  }
+
+  # AWS Managed Rules — Common Rule Set (SQLi, XSS, bad bots)
+  rule {
+    name     = "AWSManagedRulesCommonRuleSet"
+    priority = 0
+
+    override_action {
+      none {}
+    }
+
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesCommonRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${var.project_name}-api-common-rules"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # Rate-limit: 300 requests per 5 min per IP
+  rule {
+    name     = "RateLimitRule"
+    priority = 1
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        limit              = 300
+        aggregate_key_type = "IP"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${var.project_name}-api-rate-limit"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "${var.project_name}-api-waf-metrics"
+    sampled_requests_enabled   = true
+  }
+
+  tags = {
+    Name = "${var.project_name}-api-waf"
+  }
+}
+
+resource "aws_wafv2_web_acl_association" "api" {
+  resource_arn = aws_api_gateway_stage.v1.arn
+  web_acl_arn  = aws_wafv2_web_acl.api.arn
+}

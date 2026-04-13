@@ -199,12 +199,14 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     total_processed = 0
     total_stored = 0
     total_duplicates = 0
-    total_errors = 0
+    total_filtered = 0
+    batch_item_failures: List[Dict[str, str]] = []
 
     # Get TTL (60 days from now)
     ttl = int((datetime.utcnow() + timedelta(days=60)).timestamp())
 
     for record in event.get("Records", []):
+        message_id = record.get("messageId", "unknown")
         try:
             # Parse SQS message
             body = json.loads(record["body"])
@@ -219,13 +221,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             job_url = body.get("job_url", "").strip()
             if not title or not job_url:
                 logger.warning(f"Skipping job with missing title or url: {body}")
-                total_errors += 1
+                total_filtered += 1
                 continue
 
             # Location filter — only store Atlanta/GA or remote jobs
             if not meets_location_requirement(location):
                 logger.info(f"Skipping out-of-area job: '{title}' at '{location}'")
-                total_errors += 1
+                total_filtered += 1
                 continue
 
             # Fall back to "Unknown" so the job is still stored and searchable
@@ -276,13 +278,9 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             if benefits:
                 job_item["benefits"] = benefits
 
-            # Try to fetch Glassdoor rating (best effort)
-            rating = fetch_glassdoor_rating(company, glassdoor_cache_table)
-            if rating is not None:
-                job_item["rating"] = rating
-
-            # Store in DynamoDB: new jobs get a full put, existing jobs
-            # get their timestamps refreshed so "Last updated" stays current.
+            # ── Store the job first, THEN attempt rating lookup ──
+            # This ensures the job is persisted even if the Glassdoor HTTP
+            # call is slow or fails. Rating is applied as a post-write update.
             try:
                 dynamodb.put_item(
                     jobs_table,
@@ -309,22 +307,32 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 else:
                     raise
 
+            # Best-effort Glassdoor rating — applied as a separate update so
+            # the HTTP call never blocks or prevents the job from being stored.
+            try:
+                rating = fetch_glassdoor_rating(company, glassdoor_cache_table)
+                if rating is not None:
+                    dynamodb.update_item(
+                        jobs_table,
+                        {"pk": job_item["pk"], "sk": job_item["sk"]},
+                        "SET rating = :r, glassdoorRating = :r",
+                        {":r": rating},
+                    )
+            except Exception as re_err:
+                logger.debug(f"Non-blocking: Glassdoor rating failed for {company}: {re_err}")
+
         except json.JSONDecodeError:
             logger.error(f"Failed to parse SQS message: {record}")
-            total_errors += 1
+            # Malformed JSON won't succeed on retry — don't report as failure
         except Exception as e:
-            logger.error(f"Error processing SQS record: {e}", exc_info=True)
-            total_errors += 1
+            logger.error(f"Error processing SQS record {message_id}: {e}", exc_info=True)
+            # Report this message for retry via ReportBatchItemFailures
+            batch_item_failures.append({"itemIdentifier": message_id})
 
     logger.info(
         f"Enrichment complete: {total_processed} processed, "
-        f"{total_stored} stored, {total_duplicates} duplicates, {total_errors} errors"
+        f"{total_stored} stored, {total_duplicates} duplicates, "
+        f"{total_filtered} filtered, {len(batch_item_failures)} failures"
     )
 
-    return {
-        "statusCode": 200,
-        "processed": total_processed,
-        "stored": total_stored,
-        "duplicates": total_duplicates,
-        "errors": total_errors,
-    }
+    return {"batchItemFailures": batch_item_failures}

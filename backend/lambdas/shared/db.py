@@ -164,6 +164,7 @@ class DynamoDBHelper:
         expression_attribute_names: Optional[Dict[str, str]] = None,
         limit: Optional[int] = None,
         exclusive_start_key: Optional[Dict[str, Any]] = None,
+        projection_expression: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """
         Scan DynamoDB table with optional filtering and pagination.
@@ -175,6 +176,7 @@ class DynamoDBHelper:
             expression_attribute_names: Optional attribute name mappings
             limit: Optional result limit
             exclusive_start_key: Optional pagination token
+            projection_expression: Optional comma-separated attributes to return
 
         Returns:
             Tuple of (items list, last_evaluated_key or None)
@@ -192,6 +194,8 @@ class DynamoDBHelper:
                 kwargs["Limit"] = limit
             if exclusive_start_key:
                 kwargs["ExclusiveStartKey"] = exclusive_start_key
+            if projection_expression:
+                kwargs["ProjectionExpression"] = projection_expression
 
             response = table.scan(**kwargs)
             return response.get("Items", []), response.get("LastEvaluatedKey")

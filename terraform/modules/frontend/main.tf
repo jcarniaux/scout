@@ -138,6 +138,41 @@ resource "aws_wafv2_web_acl" "main" {
   }
 }
 
+# ─── Security response headers ───────────────────────────────────────────────
+# Adds HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, and a
+# baseline Content-Security-Policy to every CloudFront response.
+resource "aws_cloudfront_response_headers_policy" "security" {
+  name = "${var.project_name}-security-headers"
+
+  security_headers_config {
+    strict_transport_security {
+      access_control_max_age_sec = 63072000 # 2 years
+      include_subdomains         = true
+      preload                    = true
+      override                   = true
+    }
+
+    content_type_options {
+      override = true
+    }
+
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+
+    content_security_policy {
+      content_security_policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.amazonaws.com https://cognito-idp.*.amazonaws.com; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+      override                = true
+    }
+  }
+}
+
 # CloudFront Distribution
 resource "aws_cloudfront_distribution" "main" {
   origin {
@@ -172,8 +207,9 @@ resource "aws_cloudfront_distribution" "main" {
 
     # AWS managed "CachingOptimized" policy — ID is a global constant across all accounts/regions.
     # Hardcoded to avoid provider plan/apply inconsistency with data source lookups.
-    cache_policy_id = "658327ea-f89d-4fab-a63d-7e88639e58f6"
-    compress        = true
+    cache_policy_id            = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+    compress                   = true
 
     viewer_protocol_policy = "redirect-to-https"
   }

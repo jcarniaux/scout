@@ -103,28 +103,41 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # Scan and delete orphaned user status records
         # (where the referenced job no longer exists)
+        #
+        # Strategy: scan the jobs table once to build a set of existing job PKs,
+        # then scan status records and check membership in-memory.
+        # This is 2 scans instead of N+1 queries.
         logger.info("Purging orphaned user status records")
 
-        status_items, _ = dynamodb.scan(user_status_table)
+        # 1. Build set of existing job PKs from a full scan (projection = pk only)
+        existing_job_pks: set = set()
+        last_key = None
+        while True:
+            items, last_key = dynamodb.scan(
+                jobs_table,
+                projection_expression="#pk",
+                expression_attribute_names={"#pk": "pk"},
+                exclusive_start_key=last_key,
+            )
+            for item in items:
+                existing_job_pks.add(item.get("pk", ""))
+            if not last_key:
+                break
 
+        logger.info(f"Found {len(existing_job_pks)} existing job PKs")
+
+        # 2. Scan all status records and find orphans
         items_to_delete = []
-        for status_item in status_items:
-            job_id = status_item.get("sk", "").replace("JOB#", "")
-
-            # Check if job exists — query by pk = "JOB#{job_hash}" (no JobHashIndex needed)
-            try:
-                job_items, _ = dynamodb.query(
-                    jobs_table,
-                    "pk = :pk",
-                    {":pk": f"JOB#{job_id}"},
-                )
-
-                if not job_items:
-                    # Job doesn't exist, mark status for deletion
+        last_key = None
+        while True:
+            status_items, last_key = dynamodb.scan(user_status_table)
+            for status_item in status_items:
+                # status sk is "JOB#{job_hash}" — the corresponding jobs pk is the same
+                job_pk = status_item.get("sk", "")
+                if job_pk and job_pk not in existing_job_pks:
                     items_to_delete.append({"pk": status_item["pk"], "sk": status_item["sk"]})
-            except Exception as e:
-                logger.warning(f"Error checking job {job_id}: {e}")
-                continue
+            if not last_key:
+                break
 
         if items_to_delete:
             dynamodb.batch_write(user_status_table, [], items_to_delete)
