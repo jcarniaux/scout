@@ -256,10 +256,10 @@ resource "aws_lambda_function" "get_user_settings" {
 
   environment {
     variables = {
-      USERS_TABLE     = var.dynamodb_users_table_name
-      RESUMES_BUCKET  = var.resumes_bucket_name
-      AWS_ACCOUNT_ID  = data.aws_caller_identity.current.account_id
-      SITE_URL        = "https://${var.subdomain}.${var.domain_name}"
+      USERS_TABLE    = var.dynamodb_users_table_name
+      RESUMES_BUCKET = var.resumes_bucket_name
+      AWS_ACCOUNT_ID = data.aws_caller_identity.current.account_id
+      SITE_URL       = "https://${var.subdomain}.${var.domain_name}"
     }
   }
 
