@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, List
 from shared.db import DynamoDBHelper
 from shared.response import success_response, error_response, not_found_response, unauthorized_response
 from shared.models import dynamo_deserialize
+from shared.crawler_utils import classify_contract_type
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -85,7 +86,13 @@ def serialize_job(item: Dict[str, Any]) -> Dict[str, Any]:
         "createdAt":      item.get("created_at") or item.get("crawled_at"),
         "description":    clean(item.get("description")),
         "jobType":        clean(item.get("job_type")),
-        "contractType":   clean(item.get("contract_type")),
+        "contractType":   (
+            clean(item.get("contract_type"))
+            or classify_contract_type(
+                item.get("job_type"),
+                item.get("description") or "",
+            )
+        ),
         "salaryMin":      item.get("salary_min"),
         "salaryMax":      item.get("salary_max"),
         "glassdoorRating": item.get("rating"),
@@ -193,9 +200,17 @@ def _attach_statuses_and_filter(
         if sources and job.get("source", "").lower() not in sources:
             continue
 
-        # Filter by contract type
+        # Filter by contract type — derive on the fly for jobs that predate
+        # the contract_type field (uses stored job_type + description)
         if contract_types:
-            ct = (job.get("contract_type") or "").lower()
+            ct = (
+                job.get("contract_type")
+                or classify_contract_type(
+                    job.get("job_type"),
+                    job.get("description") or "",
+                )
+                or ""
+            ).lower()
             if ct not in contract_types:
                 continue
 

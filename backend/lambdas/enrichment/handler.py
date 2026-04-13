@@ -15,7 +15,7 @@ import requests
 from shared.db import DynamoDBHelper
 from shared.metrics import emit_metric
 from shared.models import dynamo_serialize
-from shared.crawler_utils import meets_location_requirement
+from shared.crawler_utils import classify_contract_type, meets_location_requirement
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -102,43 +102,6 @@ def extract_benefits(description: str) -> List[str]:
         benefits.add("Stock Options")
 
     return sorted(list(benefits))
-
-
-def classify_contract_type(job_type: Optional[str], description: str) -> Optional[str]:
-    """
-    Classify a job as 'permanent', 'contract', or 'freelance' based on
-    the crawler-provided job_type field and description keywords.
-
-    Returns None when there's not enough signal to classify.
-    """
-    # Merge both signals into one lowercase string for matching
-    signals = f"{(job_type or '')} {description}".lower()
-
-    # Freelance — check first (more specific than "contract")
-    if any(kw in signals for kw in (
-        "freelance", "freelancer", "independent contractor",
-        "1099", "self-employed", "self employed",
-    )):
-        return "freelance"
-
-    # Contract / temporary / fixed-term
-    if any(kw in signals for kw in (
-        "contract", "contractor", "temp ", "temporary",
-        "fixed-term", "fixed term", "short-term", "short term",
-        "c2c", "corp to corp", "corp-to-corp", "w2 contract",
-        "cdd",
-    )):
-        return "contract"
-
-    # Permanent / full-time / CDI
-    if any(kw in signals for kw in (
-        "permanent", "full-time", "full time", "fulltime",
-        "regular", "staff", "direct hire", "direct-hire",
-        "cdi", "employee",
-    )):
-        return "permanent"
-
-    return None
 
 
 def fetch_glassdoor_rating(company: str, cache_table: str) -> Optional[float]:
