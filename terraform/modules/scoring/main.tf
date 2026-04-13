@@ -251,12 +251,13 @@ resource "aws_iam_role_policy" "job_scorer_dynamodb" {
   })
 }
 
-# Claude 4-series models are accessed via cross-region inference profiles
-# (e.g. us.anthropic.claude-sonnet-4-6) which route across AWS regions automatically.
-# Inference profiles require two separate ARN grants:
+# Claude 4-series models use cross-region inference profiles. Bedrock still
+# needs aws-marketplace:Subscribe to activate the model on first use, even
+# though the Bedrock console "Model access" page has been removed. The Subscribe
+# permission is limited to Bedrock-related marketplace products.
+# Inference profiles also require two separate bedrock:InvokeModel grants:
 #   1. The inference profile itself  (arn:...:inference-profile/us.anthropic.*)
 #   2. The underlying foundation model (arn:...:foundation-model/anthropic.*)
-# No AWS Marketplace subscription is needed for Claude 4+ on Bedrock.
 resource "aws_iam_role_policy" "job_scorer_bedrock" {
   name = "${var.project_name}-job-scorer-bedrock"
   role = aws_iam_role.job_scorer_role.id
@@ -265,15 +266,27 @@ resource "aws_iam_role_policy" "job_scorer_bedrock" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "AllowBedrockInferenceProfile"
+        Sid    = "AllowBedrockInvokeModel"
         Effect = "Allow"
         Action = ["bedrock:InvokeModel"]
         Resource = [
-          # Cross-region inference profile (us.anthropic.*, eu.anthropic.*, ap.anthropic.*)
+          # Cross-region inference profile
           "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/${var.bedrock_model_id}",
-          # Underlying foundation model invoked by the profile in each region
+          # Underlying foundation model invoked by the profile across regions
           "arn:aws:bedrock:*::foundation-model/anthropic.*",
         ]
+      },
+      {
+        # Bedrock requires these marketplace actions to activate model access on
+        # first use. ViewSubscriptions is read-only; Subscribe is scoped to the
+        # AWS Marketplace product for Anthropic models on Bedrock.
+        Sid    = "AllowBedrockMarketplaceActivation"
+        Effect = "Allow"
+        Action = [
+          "aws-marketplace:ViewSubscriptions",
+          "aws-marketplace:Subscribe",
+        ]
+        Resource = ["*"]
       }
     ]
   })
