@@ -49,7 +49,7 @@ variable "dynamodb_job_scores_table_arn" {
 }
 
 variable "bedrock_model_id" {
-  description = "Bedrock model ID for AI job scoring"
+  description = "Bedrock model ID for AI job scoring. Use the cross-region inference profile ID (e.g. us.anthropic.claude-sonnet-4-6) for Claude 4-series models — these don't require a Marketplace subscription."
   type        = string
-  default     = "anthropic.claude-3-haiku-20240307-v1:0"
+  default     = "us.anthropic.claude-sonnet-4-6"
 }

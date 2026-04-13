@@ -251,11 +251,12 @@ resource "aws_iam_role_policy" "job_scorer_dynamodb" {
   })
 }
 
-# Scoped to Claude Haiku only — prevents accidental Sonnet/Opus invocations.
-# aws-marketplace:ViewSubscriptions is required for the Lambda to verify that the
-# Bedrock model subscription is active; without it the first InvokeModel call on
-# a freshly-subscribed model returns AccessDeniedException even with the correct
-# bedrock:InvokeModel permission.
+# Claude 4-series models are accessed via cross-region inference profiles
+# (e.g. us.anthropic.claude-sonnet-4-6) which route across AWS regions automatically.
+# Inference profiles require two separate ARN grants:
+#   1. The inference profile itself  (arn:...:inference-profile/us.anthropic.*)
+#   2. The underlying foundation model (arn:...:foundation-model/anthropic.*)
+# No AWS Marketplace subscription is needed for Claude 4+ on Bedrock.
 resource "aws_iam_role_policy" "job_scorer_bedrock" {
   name = "${var.project_name}-job-scorer-bedrock"
   role = aws_iam_role.job_scorer_role.id
@@ -264,16 +265,15 @@ resource "aws_iam_role_policy" "job_scorer_bedrock" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = ["bedrock:InvokeModel"]
-        Resource = ["arn:aws:bedrock:${var.aws_region}::foundation-model/${var.bedrock_model_id}"]
-      },
-      {
-        # Required to verify the Bedrock model marketplace subscription is active.
-        # Read-only — does not allow subscribing to new models.
-        Effect   = "Allow"
-        Action   = ["aws-marketplace:ViewSubscriptions"]
-        Resource = ["*"]
+        Sid    = "AllowBedrockInferenceProfile"
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        Resource = [
+          # Cross-region inference profile (us.anthropic.*, eu.anthropic.*, ap.anthropic.*)
+          "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/${var.bedrock_model_id}",
+          # Underlying foundation model invoked by the profile in each region
+          "arn:aws:bedrock:*::foundation-model/anthropic.*",
+        ]
       }
     ]
   })
