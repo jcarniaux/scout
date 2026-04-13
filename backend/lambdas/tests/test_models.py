@@ -1,4 +1,5 @@
 """Tests for shared.models — serialization round-trip and edge cases."""
+import pytest
 from decimal import Decimal
 
 from shared.models import dynamo_serialize, dynamo_deserialize
@@ -82,7 +83,3 @@ class TestRoundTrip:
         assert deserialized["daily_report"] is True
         assert set(deserialized["benefits"]) == {"PTO", "Medical"}
         assert "empty" not in deserialized
-
-
-# Need pytest for approx
-import pytest

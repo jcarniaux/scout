@@ -1,8 +1,7 @@
 """Tests for enrichment.handler — SQS-triggered job enrichment pipeline."""
 import json
 import pytest
-from decimal import Decimal
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from moto import mock_aws
 
 

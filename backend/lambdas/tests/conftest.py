@@ -4,7 +4,6 @@ Shared test fixtures for Scout backend tests.
 Uses moto to mock AWS services so tests never touch real infrastructure.
 """
 import json
-import os
 import pytest
 import boto3
 from moto import mock_aws

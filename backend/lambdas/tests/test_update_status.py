@@ -1,7 +1,6 @@
 """Tests for api.update_status handler — PATCH /jobs/{jobId}/status."""
 import json
 import pytest
-from decimal import Decimal
 from moto import mock_aws
 
 from tests.conftest import make_api_event
