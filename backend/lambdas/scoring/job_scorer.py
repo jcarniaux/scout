@@ -41,6 +41,31 @@ MAX_JOBS_TO_SCORE = 100
 SCORE_LOOKBACK_DAYS = 30
 
 
+def _extract_json(text: str) -> Dict[str, Any]:
+    """
+    Extract a JSON object from a text string that may contain preamble or
+    markdown fences.  Tries strict parse first, then falls back to regex
+    extraction so Haiku's occasional prose wrappers don't kill scoring.
+    """
+    # Strip markdown code fences
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-z]*\n?", "", cleaned).rstrip("`").strip()
+
+    # Try strict parse first
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Fall back: extract first {...} block
+    match = re.search(r"\{[^{}]+\}", cleaned, re.DOTALL)
+    if match:
+        return json.loads(match.group())
+
+    raise ValueError(f"No valid JSON object found in Bedrock response: {cleaned[:200]!r}")
+
+
 def _score_job_for_user(job: Dict[str, Any], resume_text: str) -> Tuple[int, str]:
     """
     Call Bedrock Claude Haiku to score one job against a resume.
@@ -57,16 +82,28 @@ def _score_job_for_user(job: Dict[str, Any], resume_text: str) -> Tuple[int, str
     """
     model_id = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
 
-    resume_excerpt = resume_text[:2000]
-    description_excerpt = (job.get("description") or "")[:1500]
+    # Ensure resume_text is a plain string (guard against Decimal/bytes stored in DynamoDB)
+    resume_excerpt = str(resume_text)[:2000]
+    description_excerpt = str(job.get("description") or "")[:1500]
+
+    # DynamoDB stores the title as "role_name"; fall back to "title" for forward compat
+    job_title = job.get("role_name") or job.get("title") or ""
+    company = job.get("company") or ""
 
     prompt = (
         "Score this job posting against the candidate's resume on a 0-100 scale.\n\n"
         f"Resume:\n{resume_excerpt}\n\n"
-        f"Job Title: {job.get('title', '')}\n"
-        f"Company: {job.get('company', '')}\n"
+        f"Job Title: {job_title}\n"
+        f"Company: {company}\n"
         f"Description:\n{description_excerpt}\n\n"
-        'Return ONLY valid JSON: {"score": <integer 0-100>, "reasoning": "<one concise sentence>"}'
+        'Return ONLY valid JSON with no other text: {"score": <integer 0-100>, "reasoning": "<one concise sentence>"}'
+    )
+
+    logger.info(
+        "Invoking Bedrock model=%s for job=%s title=%r",
+        model_id,
+        job.get("job_hash", "?"),
+        job_title,
     )
 
     response = _bedrock.invoke_model(
@@ -75,19 +112,16 @@ def _score_job_for_user(job: Dict[str, Any], resume_text: str) -> Tuple[int, str
         accept="application/json",
         body=json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 120,
+            "max_tokens": 200,
             "temperature": 0,
             "messages": [{"role": "user", "content": prompt}],
         }),
     )
     raw = json.loads(response["body"].read())
     text = raw["content"][0]["text"].strip()
+    logger.debug("Bedrock raw response: %s", text[:300])
 
-    # Strip markdown code fences that Haiku occasionally wraps around JSON
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("`").strip()
-
-    result = json.loads(text)
+    result = _extract_json(text)
     score = max(0, min(100, int(result["score"])))
     reasoning = str(result.get("reasoning", ""))[:500]
     return score, reasoning
@@ -173,7 +207,14 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return {"statusCode": 400, "error": "Missing user_pk"}
 
     if job_hash:
-        result = _score_single(user_pk, job_hash, jobs_table, users_table, job_scores_table)
+        try:
+            result = _score_single(user_pk, job_hash, jobs_table, users_table, job_scores_table)
+        except Exception as exc:
+            exc_type = type(exc).__name__
+            logger.error("Unhandled exception in _score_single: %s: %s", exc_type, exc, exc_info=True)
+            if is_api_gw:
+                return _api_gw_response(500, {"error": f"Internal error: {exc_type}"})
+            return {"statusCode": 500, "error": f"Internal error: {exc_type}"}
         if is_api_gw:
             status_code = result.get("statusCode", 200)
             body = {k: v for k, v in result.items() if k != "statusCode"}
@@ -221,8 +262,9 @@ def _score_single(
     try:
         score, reasoning = _score_job_for_user(job, resume_text)
     except Exception as exc:
-        logger.error(f"Bedrock scoring failed for job {job_hash}: {exc}", exc_info=True)
-        return {"statusCode": 500, "error": "Scoring failed"}
+        exc_type = type(exc).__name__
+        logger.error("Bedrock scoring failed job=%s %s: %s", job_hash, exc_type, exc, exc_info=True)
+        return {"statusCode": 500, "error": f"Scoring failed: {exc_type}"}
 
     # Persist the score
     ttl = int((datetime.utcnow() + timedelta(days=60)).timestamp())
