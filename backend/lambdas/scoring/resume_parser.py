@@ -11,7 +11,6 @@ Flow:
 The user_sub is derived from the S3 key: resumes/{user_sub}/resume.pdf
 """
 import io
-import json
 import logging
 import os
 import urllib.parse

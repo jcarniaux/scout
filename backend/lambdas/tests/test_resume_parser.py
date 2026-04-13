@@ -5,11 +5,10 @@ Uses moto to mock S3 and DynamoDB. Uses minimal in-memory PDFs
 (created with reportlab or a raw byte fixture) so we don't need real PDF files.
 """
 import io
-import json
 import pytest
 import boto3
 from moto import mock_aws
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
