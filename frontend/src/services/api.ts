@@ -156,4 +156,13 @@ export const api = {
   triggerScoring: async (): Promise<{ message: string }> => {
     return authFetch('/user/score-jobs', { method: 'POST' });
   },
+
+  /**
+   * Synchronously score a single job against the user's resume using Bedrock.
+   * Waits for the result (~2-5s) and returns the score + one-sentence reasoning.
+   * Requires the user to have a ready resume.
+   */
+  scoreJob: async (jobId: string): Promise<{ score: number; reasoning: string }> => {
+    return authFetch(`/jobs/${jobId}/score`, { method: 'POST' });
+  },
 };

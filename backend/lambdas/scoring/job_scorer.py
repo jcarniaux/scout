@@ -1,20 +1,18 @@
 """
 On-demand AI job scoring Lambda for Scout.
 
-Triggered manually via POST /user/score-jobs (async invocation — no API Gateway
-timeout constraint). Scores all recent jobs against the requesting user's resume
-using Amazon Bedrock Claude Haiku, then writes results to scout-job-scores.
+Supports two modes depending on the event payload:
 
-Flow:
-  1. API handler invokes this Lambda asynchronously (InvokeType=Event)
-  2. This Lambda fetches the user's resume from USERS_TABLE
-  3. Queries up to MAX_JOBS_TO_SCORE recent jobs from the DateIndex
-  4. Calls Bedrock for each job, writes score to JOB_SCORES_TABLE
-  5. Updates the user's scoring_status = "done" and last_scored_at timestamp
+  BULK MODE (async, POST /user/score-jobs):
+    { "user_pk": "USER#<sub>" }
+    Scores up to MAX_JOBS_TO_SCORE recent jobs, writes all to JOB_SCORES_TABLE,
+    updates scoring_status = "done". Invoked asynchronously (InvokeType=Event)
+    so the API always returns 202 immediately.
 
-If Bedrock is unavailable the Lambda logs errors and continues — partial results
-are fine. The caller always gets a 202 immediately regardless of this Lambda's
-outcome.
+  SINGLE MODE (sync, POST /jobs/{jobId}/score):
+    { "user_pk": "USER#<sub>", "job_hash": "<hash>" }
+    Scores one specific job synchronously and returns { score, reasoning }
+    directly to the caller. No status field update.
 """
 import json
 import logging
@@ -121,28 +119,136 @@ def _fetch_recent_jobs(jobs_table: str, days: int = SCORE_LOOKBACK_DAYS) -> List
     return jobs[:MAX_JOBS_TO_SCORE]
 
 
+def _api_gw_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
+    """Wrap a response dict in API Gateway proxy integration format."""
+    return {
+        "statusCode": status_code,
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+        },
+        "body": json.dumps(body),
+    }
+
+
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    Score recent jobs for a single user.
+    Dispatcher: single-job mode when event contains job_hash or pathParameters.jobId,
+    bulk mode otherwise.
 
-    Expected event payload (set by the API handler before async invocation):
-      {
-        "user_sub": "<Cognito user sub>",
-        "user_pk":  "USER#<sub>"       # convenience, avoids re-constructing
-      }
+    Supports two invocation patterns:
+    - API Gateway proxy (POST /jobs/{jobId}/score): reads user_sub from Cognito claims
+      and jobId from pathParameters; returns an API GW-formatted response.
+    - Direct Lambda invocation (async bulk, or sync single): reads user_pk / job_hash
+      directly from the event dict; returns a plain dict.
     """
+    # Detect API Gateway proxy events
+    is_api_gw = "requestContext" in event
+
+    if is_api_gw:
+        try:
+            user_sub = event["requestContext"]["authorizer"]["claims"]["sub"]
+        except (KeyError, TypeError):
+            return _api_gw_response(401, {"error": "Unauthorized"})
+        job_hash: str = (event.get("pathParameters") or {}).get("jobId", "")
+        user_pk: str = f"USER#{user_sub}"
+    else:
+        user_pk = event.get("user_pk", "")
+        job_hash = event.get("job_hash", "")
+
     jobs_table = os.environ.get("JOBS_TABLE", "")
     users_table = os.environ.get("USERS_TABLE", "")
     job_scores_table = os.environ.get("JOB_SCORES_TABLE", "")
 
     if not jobs_table or not users_table or not job_scores_table:
         logger.error("Missing required environment variables")
+        if is_api_gw:
+            return _api_gw_response(500, {"error": "Missing environment variables"})
         return {"statusCode": 500, "error": "Missing environment variables"}
 
-    user_pk: str = event.get("user_pk", "")
     if not user_pk:
         logger.error("Missing user_pk in event payload")
+        if is_api_gw:
+            return _api_gw_response(400, {"error": "Missing user_pk"})
         return {"statusCode": 400, "error": "Missing user_pk"}
+
+    if job_hash:
+        result = _score_single(user_pk, job_hash, jobs_table, users_table, job_scores_table)
+        if is_api_gw:
+            status_code = result.get("statusCode", 200)
+            body = {k: v for k, v in result.items() if k != "statusCode"}
+            return _api_gw_response(status_code, body)
+        return result
+
+    return _score_bulk(user_pk, jobs_table, users_table, job_scores_table)
+
+
+def _score_single(
+    user_pk: str,
+    job_hash: str,
+    jobs_table: str,
+    users_table: str,
+    job_scores_table: str,
+) -> Dict[str, Any]:
+    """
+    Score one specific job synchronously and return {score, reasoning}.
+    Called from POST /jobs/{jobId}/score (synchronous Lambda invocation).
+    """
+    # Fetch user + resume
+    user = dynamodb.get_item(users_table, {"pk": user_pk})
+    if not user:
+        return {"statusCode": 404, "error": "User not found"}
+
+    resume_text: str = user.get("resume_text", "")
+    if not resume_text:
+        return {"statusCode": 400, "error": "No resume uploaded"}
+
+    # Fetch the specific job — query by pk, take first matching item
+    try:
+        items, _ = dynamodb.query(
+            jobs_table,
+            "pk = :pk",
+            {":pk": f"JOB#{job_hash}"},
+        )
+        if not items:
+            return {"statusCode": 404, "error": "Job not found"}
+        job = dynamo_deserialize(items[0])
+    except Exception as exc:
+        logger.error(f"Failed to fetch job {job_hash}: {exc}", exc_info=True)
+        return {"statusCode": 500, "error": "Failed to fetch job"}
+
+    # Score it
+    try:
+        score, reasoning = _score_job_for_user(job, resume_text)
+    except Exception as exc:
+        logger.error(f"Bedrock scoring failed for job {job_hash}: {exc}", exc_info=True)
+        return {"statusCode": 500, "error": "Scoring failed"}
+
+    # Persist the score
+    ttl = int((datetime.utcnow() + timedelta(days=60)).timestamp())
+    try:
+        dynamodb.put_item(job_scores_table, {
+            "pk": user_pk,
+            "sk": f"JOB#{job_hash}",
+            "score": score,
+            "reasoning": reasoning,
+            "scored_at": datetime.utcnow().isoformat(),
+            "ttl": ttl,
+        })
+    except Exception as exc:
+        logger.warning(f"Failed to persist score for {job_hash}: {exc}")
+
+    emit_metric("Scout/Scoring", "JobsScored", 1)
+    return {"statusCode": 200, "score": score, "reasoning": reasoning}
+
+
+def _score_bulk(
+    user_pk: str,
+    jobs_table: str,
+    users_table: str,
+    job_scores_table: str,
+) -> Dict[str, Any]:
+    """Score all recent jobs for the user (async bulk mode)."""
 
     # ── Fetch user + resume ────────────────────────────────────────────────────
     user = dynamodb.get_item(users_table, {"pk": user_pk})

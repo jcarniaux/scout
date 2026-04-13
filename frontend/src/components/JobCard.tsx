@@ -1,9 +1,10 @@
+import { useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { Job, ApplicationStatus, ContractType } from '@/types';
 import { StatusSelect } from './StatusSelect';
 import { RatingBadge } from './RatingBadge';
-import { ExternalLink, MapPin, DollarSign, Calendar } from 'lucide-react';
-import { useUpdateStatus } from '@/hooks/useJobs';
+import { ExternalLink, MapPin, DollarSign, Calendar, Sparkles, Loader2 } from 'lucide-react';
+import { useUpdateStatus, useScoreJob, useSettings } from '@/hooks/useJobs';
 
 function formatPostedDate(dateStr: string | null | undefined): string {
   if (!dateStr) return 'Date unknown';
@@ -68,9 +69,25 @@ function MatchScoreBadge({ score, reasoning }: { score: number | null; reasoning
 
 export function JobCard({ job }: JobCardProps) {
   const updateStatus = useUpdateStatus();
+  const scoreJob = useScoreJob();
+  const { data: settings } = useSettings();
+
+  // Local score overrides the job-level score immediately after scoring without
+  // requiring a page refresh — React Query cache update happens on the next fetch.
+  const [localScore, setLocalScore] = useState<{ score: number; reasoning: string } | null>(null);
+
+  const effectiveScore = localScore?.score ?? job.matchScore;
+  const effectiveReasoning = localScore?.reasoning ?? job.matchReasoning;
+  const resumeReady = settings?.resumeStatus === 'ready';
 
   const handleStatusChange = (status: ApplicationStatus) => {
     updateStatus.mutate({ jobId: job.jobId, status });
+  };
+
+  const handleScore = () => {
+    scoreJob.mutate(job.jobId, {
+      onSuccess: (data) => setLocalScore(data),
+    });
   };
 
   const salaryDisplay =
@@ -105,7 +122,23 @@ export function JobCard({ job }: JobCardProps) {
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${sourceClass}`}>
           {sourceLabel}
         </span>
-        <MatchScoreBadge score={job.matchScore} reasoning={job.matchReasoning} />
+        <MatchScoreBadge score={effectiveScore} reasoning={effectiveReasoning} />
+        {/* Score button — shown when resume is ready and no score exists yet */}
+        {resumeReady && effectiveScore === null && (
+          <button
+            onClick={handleScore}
+            disabled={scoreJob.isPending}
+            title="Score this job against your resume with AI"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/30 disabled:opacity-50 disabled:cursor-wait transition-colors"
+          >
+            {scoreJob.isPending ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <Sparkles className="w-3 h-3" />
+            )}
+            {scoreJob.isPending ? 'Scoring…' : 'AI Score'}
+          </button>
+        )}
         <ContractTypeBadge type={job.contractType} />
         <span className="text-gray-300 dark:text-gray-600">·</span>
         <span className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
@@ -164,10 +197,16 @@ export function JobCard({ job }: JobCardProps) {
         </div>
       )}
 
-      {/* AI match reasoning (optional — only shown when score is available) */}
-      {job.matchScore !== null && job.matchReasoning && (
+      {/* AI match reasoning (optional — shown after scoring or when pre-scored) */}
+      {effectiveScore !== null && effectiveReasoning && (
         <p className="text-xs text-gray-500 dark:text-gray-400 italic mb-2 line-clamp-2">
-          {job.matchReasoning}
+          {effectiveReasoning}
+        </p>
+      )}
+      {/* Error state if scoring failed */}
+      {scoreJob.isError && (
+        <p className="text-xs text-red-500 dark:text-red-400 italic mb-2">
+          Scoring failed — please try again.
         </p>
       )}
 

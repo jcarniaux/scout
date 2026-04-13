@@ -52,3 +52,13 @@ export function useUpdateSettings() {
     },
   });
 }
+
+/**
+ * Synchronously score a single job against the user's resume.
+ * Returns { score, reasoning } directly — no polling required.
+ */
+export function useScoreJob() {
+  return useMutation({
+    mutationFn: (jobId: string) => api.scoreJob(jobId),
+  });
+}
