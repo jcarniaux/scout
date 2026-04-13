@@ -9,7 +9,7 @@ Covers:
 import json
 import pytest
 import boto3
-from datetime import datetime, timedelta
+from datetime import datetime
 from moto import mock_aws
 from unittest.mock import patch, MagicMock
 
@@ -173,7 +173,7 @@ class TestJobScorerHandler:
         today = datetime.utcnow().date().isoformat()
         jobs_table.put_item(Item={
             "pk": f"JOB#{job_hash}",
-            "sk": f"SOURCE#indeed#deadbeef",
+            "sk": "SOURCE#indeed#deadbeef",
             "gsi1pk": "JOB",
             "postedDate": today,
             "job_hash": job_hash,
