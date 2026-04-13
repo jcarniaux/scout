@@ -10,7 +10,7 @@ from tests.conftest import make_api_event
 
 def _make_job_item(job_hash, title="Security Engineer", company="Acme Corp",
                    location="Atlanta, GA", source="linkedin", salary_min=None,
-                   rating=None, days_ago=0):
+                   rating=None, days_ago=0, contract_type=None):
     """Build a DynamoDB job item matching the Scout schema."""
     posted = (datetime.utcnow() - timedelta(days=days_ago)).date().isoformat()
     item = {
@@ -30,6 +30,8 @@ def _make_job_item(job_hash, title="Security Engineer", company="Acme Corp",
         item["salary_min"] = Decimal(str(salary_min))
     if rating is not None:
         item["rating"] = Decimal(str(rating))
+    if contract_type is not None:
+        item["contract_type"] = contract_type
     return item
 
 
@@ -175,6 +177,30 @@ class TestListJobs:
         salaries = [j["salaryMin"] for j in body["jobs"]]
         assert salaries == sorted(salaries, reverse=True)
 
+    def test_contract_type_filter(self):
+        for ct, h in [("permanent", "perm1"), ("contract", "cont1"), ("freelance", "free1")]:
+            item = _make_job_item(h, title=f"{ct} role", contract_type=ct)
+            self.jobs_table.put_item(Item=item)
+        # Also add a job with no contract_type
+        item = _make_job_item("none1", title="Unknown type")
+        self.jobs_table.put_item(Item=item)
+
+        resp = self._list({"contractTypes": "permanent"})
+        body = json.loads(resp["body"])
+        assert body["total"] == 1
+        assert body["jobs"][0]["contractType"] == "permanent"
+
+    def test_contract_type_filter_multiple(self):
+        for ct, h in [("permanent", "perm1"), ("contract", "cont1"), ("freelance", "free1")]:
+            item = _make_job_item(h, title=f"{ct} role", contract_type=ct)
+            self.jobs_table.put_item(Item=item)
+
+        resp = self._list({"contractTypes": "permanent,freelance"})
+        body = json.loads(resp["body"])
+        assert body["total"] == 2
+        types = {j["contractType"] for j in body["jobs"]}
+        assert types == {"permanent", "freelance"}
+
     def test_missing_auth_returns_401(self):
         event = make_api_event(method="GET", path="/jobs")
         event["requestContext"]["authorizer"]["claims"] = {}
@@ -202,6 +228,16 @@ class TestSerializeJob:
         result = serialize_job({"pk": "JOB#x"})
         assert result["company"] == "Unknown"
         assert result["applicationStatus"] == "NOT_APPLIED"
+
+    def test_serializes_contract_type(self):
+        from api.get_jobs import serialize_job
+        result = serialize_job({"pk": "JOB#x", "contract_type": "permanent"})
+        assert result["contractType"] == "permanent"
+
+    def test_contract_type_null_when_missing(self):
+        from api.get_jobs import serialize_job
+        result = serialize_job({"pk": "JOB#x"})
+        assert result["contractType"] is None
 
 
 @mock_aws

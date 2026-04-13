@@ -30,6 +30,7 @@ export const api = {
     if (filters.search)              params.set('search', filters.search);
     if (filters.sort)                params.set('sort', filters.sort);
     if (filters.sources?.length)     params.set('sources', filters.sources.join(','));
+    if (filters.contractTypes?.length) params.set('contractTypes', filters.contractTypes.join(','));
     params.set('page', String(page));
     params.set('pageSize', String(pageSize));
     // API returns {jobs, total, page, pageSize, hasMore} — map to PaginatedResponse shape

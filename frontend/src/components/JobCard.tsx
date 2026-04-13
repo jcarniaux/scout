@@ -1,5 +1,5 @@
 import { formatDistanceToNow } from 'date-fns';
-import { Job, ApplicationStatus } from '@/types';
+import { Job, ApplicationStatus, ContractType } from '@/types';
 import { StatusSelect } from './StatusSelect';
 import { RatingBadge } from './RatingBadge';
 import { ExternalLink, MapPin, DollarSign, Calendar } from 'lucide-react';
@@ -23,6 +23,27 @@ const sourceColors: Record<string, string> = {
   ziprecruiter:  'bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300',
   dice:          'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
 };
+
+const contractTypeLabels: Record<ContractType, string> = {
+  permanent: 'Permanent',
+  contract:  'Contract',
+  freelance: 'Freelance',
+};
+
+const contractTypeColors: Record<ContractType, string> = {
+  permanent: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300',
+  contract:  'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300',
+  freelance: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300',
+};
+
+function ContractTypeBadge({ type }: { type: ContractType | null }) {
+  if (!type) return null;
+  return (
+    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${contractTypeColors[type] ?? ''}`}>
+      {contractTypeLabels[type] ?? type}
+    </span>
+  );
+}
 
 /** Color-coded match score badge (green ≥80, yellow 60–79, red <60, gray = no score) */
 function MatchScoreBadge({ score, reasoning }: { score: number | null; reasoning: string | null }) {
@@ -85,6 +106,7 @@ export function JobCard({ job }: JobCardProps) {
           {sourceLabel}
         </span>
         <MatchScoreBadge score={job.matchScore} reasoning={job.matchReasoning} />
+        <ContractTypeBadge type={job.contractType} />
         <span className="text-gray-300 dark:text-gray-600">·</span>
         <span className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
           <MapPin className="w-3.5 h-3.5 shrink-0" />

@@ -1,4 +1,4 @@
-import { DateRange, JobFilters, JobSource, ApplicationStatus } from '@/types';
+import { DateRange, JobFilters, JobSource, ApplicationStatus, ContractType } from '@/types';
 import { X } from 'lucide-react';
 
 interface FilterBarProps {
@@ -35,6 +35,12 @@ export function FilterBar({ filters, onFiltersChange, activeFilterCount }: Filte
     { value: 'dice',         label: 'Dice'         },
     { value: 'glassdoor',    label: 'Glassdoor'    },
     { value: 'ziprecruiter', label: 'ZipRecruiter' },
+  ];
+
+  const contractTypeOptions: Array<{ value: ContractType; label: string }> = [
+    { value: 'permanent', label: 'Permanent' },
+    { value: 'contract',  label: 'Contract'  },
+    { value: 'freelance', label: 'Freelance' },
   ];
 
   const sortOptions: Array<{ value: 'date' | 'salary' | 'rating' | 'match'; label: string }> = [
@@ -121,6 +127,28 @@ export function FilterBar({ filters, onFiltersChange, activeFilterCount }: Filte
                   ? current.filter((s) => s !== value)
                   : [...current, value];
                 onFiltersChange({ ...filters, sources: next.length ? next : undefined });
+              };
+              return (
+                <button key={value} onClick={toggle} className={pillClass(active)}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Contract Type */}
+        <div>
+          <label className={labelClass}>Contract Type</label>
+          <div className="flex gap-1.5">
+            {contractTypeOptions.map(({ value, label }) => {
+              const active = (filters.contractTypes ?? []).includes(value);
+              const toggle = () => {
+                const current = filters.contractTypes ?? [];
+                const next = active
+                  ? current.filter((t) => t !== value)
+                  : [...current, value];
+                onFiltersChange({ ...filters, contractTypes: next.length ? next : undefined });
               };
               return (
                 <button key={value} onClick={toggle} className={pillClass(active)}>

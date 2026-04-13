@@ -104,6 +104,43 @@ def extract_benefits(description: str) -> List[str]:
     return sorted(list(benefits))
 
 
+def classify_contract_type(job_type: Optional[str], description: str) -> Optional[str]:
+    """
+    Classify a job as 'permanent', 'contract', or 'freelance' based on
+    the crawler-provided job_type field and description keywords.
+
+    Returns None when there's not enough signal to classify.
+    """
+    # Merge both signals into one lowercase string for matching
+    signals = f"{(job_type or '')} {description}".lower()
+
+    # Freelance — check first (more specific than "contract")
+    if any(kw in signals for kw in (
+        "freelance", "freelancer", "independent contractor",
+        "1099", "self-employed", "self employed",
+    )):
+        return "freelance"
+
+    # Contract / temporary / fixed-term
+    if any(kw in signals for kw in (
+        "contract", "contractor", "temp ", "temporary",
+        "fixed-term", "fixed term", "short-term", "short term",
+        "c2c", "corp to corp", "corp-to-corp", "w2 contract",
+        "cdd",
+    )):
+        return "contract"
+
+    # Permanent / full-time / CDI
+    if any(kw in signals for kw in (
+        "permanent", "full-time", "full time", "fulltime",
+        "regular", "staff", "direct hire", "direct-hire",
+        "cdi", "employee",
+    )):
+        return "permanent"
+
+    return None
+
+
 def fetch_glassdoor_rating(company: str, cache_table: str) -> Optional[float]:
     """
     Fetch Glassdoor rating for a company.
@@ -273,6 +310,14 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "crawled_at": body.get("crawled_at", datetime.utcnow().isoformat()),
                 "ttl": ttl,
             }
+
+            # Classify contract type from job_type + description
+            contract_type = classify_contract_type(
+                job_item["job_type"],
+                body.get("description", ""),
+            )
+            if contract_type:
+                job_item["contract_type"] = contract_type
 
             # Extract benefits from description
             benefits = extract_benefits(body.get("description", ""))

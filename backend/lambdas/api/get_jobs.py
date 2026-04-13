@@ -85,6 +85,7 @@ def serialize_job(item: Dict[str, Any]) -> Dict[str, Any]:
         "createdAt":      item.get("created_at") or item.get("crawled_at"),
         "description":    clean(item.get("description")),
         "jobType":        clean(item.get("job_type")),
+        "contractType":   clean(item.get("contract_type")),
         "salaryMin":      item.get("salary_min"),
         "salaryMax":      item.get("salary_max"),
         "glassdoorRating": item.get("rating"),
@@ -170,15 +171,18 @@ def _attach_statuses_and_filter(
     user_statuses: Dict[str, str],
     status_filter: Optional[str] = None,
     sources: Optional[List[str]] = None,
+    contract_types: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Attach user statuses to jobs and apply source/status filters.
+    Attach user statuses to jobs and apply source/status/contract-type filters.
 
     Args:
         jobs: Deserialized job dicts
         user_statuses: Pre-loaded status map (job_hash → status)
         status_filter: Optional status to filter by
         sources: Optional list of source platforms to include
+        contract_types: Optional list of contract types to include
+                        (permanent, contract, freelance)
 
     Returns:
         Filtered job list with user_status attached
@@ -188,6 +192,12 @@ def _attach_statuses_and_filter(
         # Filter by source platform
         if sources and job.get("source", "").lower() not in sources:
             continue
+
+        # Filter by contract type
+        if contract_types:
+            ct = (job.get("contract_type") or "").lower()
+            if ct not in contract_types:
+                continue
 
         # Attach user status
         job_hash = job.get("job_hash")
@@ -304,6 +314,11 @@ def list_jobs(
         page_size = min(50, max(1, int(query_params.get("pageSize", "20"))))
         raw_sources = query_params.get("sources", "")
         sources = [s.strip().lower() for s in raw_sources.split(",") if s.strip()] if raw_sources else None
+        raw_contract_types = query_params.get("contractTypes", "")
+        contract_types = (
+            [c.strip().lower() for c in raw_contract_types.split(",") if c.strip()]
+            if raw_contract_types else None
+        )
 
         # Calculate how many filtered items we need
         offset = (page - 1) * page_size
@@ -319,7 +334,7 @@ def list_jobs(
         # When no re-sorting is needed (default date sort uses the GSI's
         # native order), we can stop fetching as soon as we have enough
         # filtered results. For salary/rating/match sorts, we need all items.
-        needs_full_fetch = sort_by in ("salary", "rating", "match") or status_filter is not None
+        needs_full_fetch = sort_by in ("salary", "rating", "match") or status_filter is not None or contract_types is not None
         filtered_jobs: List[Dict[str, Any]] = []
         total_ddb_items = 0
         last_key = None
@@ -342,6 +357,7 @@ def list_jobs(
                 batch_filtered = _attach_statuses_and_filter(
                     deserialized, user_statuses,
                     status_filter=status_filter, sources=sources,
+                    contract_types=contract_types,
                 )
                 filtered_jobs.extend(batch_filtered)
 
@@ -372,6 +388,7 @@ def list_jobs(
                         extra_filtered = _attach_statuses_and_filter(
                             extra_deserialized, user_statuses,
                             status_filter=status_filter, sources=sources,
+                            contract_types=contract_types,
                         )
                         filtered_jobs.extend(extra_filtered)
                 break

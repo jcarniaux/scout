@@ -17,6 +17,7 @@ export interface Job {
   createdAt: string | null;
   description: string | null;
   jobType: string | null;
+  contractType: ContractType | null;
   applicationStatus: ApplicationStatus;
   notes: string | null;
   /** AI match score 0–100, null when no resume has been uploaded */
@@ -38,12 +39,15 @@ export type DateRange = '24h' | '7d' | '30d';
 
 export type JobSource = 'linkedin' | 'indeed' | 'dice' | 'glassdoor' | 'ziprecruiter';
 
+export type ContractType = 'permanent' | 'contract' | 'freelance';
+
 export interface JobFilters {
   dateRange?: DateRange;
   status?: ApplicationStatus;
   search?: string;
   sort?: 'date' | 'salary' | 'rating' | 'match';
   sources?: string[];
+  contractTypes?: ContractType[];
 }
 
 export interface SearchLocation {

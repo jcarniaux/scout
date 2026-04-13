@@ -230,3 +230,48 @@ class TestExtractBenefits:
     def test_no_benefits_found(self):
         from enrichment.handler import extract_benefits
         assert extract_benefits("This is a plain job description with no perks mentioned.") == []
+
+
+class TestClassifyContractType:
+    """Unit tests for contract type classification."""
+
+    def test_permanent_from_job_type(self):
+        from enrichment.handler import classify_contract_type
+        assert classify_contract_type("Full-time", "") == "permanent"
+
+    def test_permanent_from_description(self):
+        from enrichment.handler import classify_contract_type
+        assert classify_contract_type("", "We're hiring a permanent staff engineer.") == "permanent"
+
+    def test_contract_from_job_type(self):
+        from enrichment.handler import classify_contract_type
+        assert classify_contract_type("Contract", "") == "contract"
+
+    def test_contract_from_description(self):
+        from enrichment.handler import classify_contract_type
+        assert classify_contract_type("", "6-month fixed-term contract position.") == "contract"
+
+    def test_freelance_from_description(self):
+        from enrichment.handler import classify_contract_type
+        assert classify_contract_type("", "Freelance developer needed for short project.") == "freelance"
+
+    def test_freelance_from_1099(self):
+        from enrichment.handler import classify_contract_type
+        assert classify_contract_type("", "This is a 1099 independent contractor role.") == "freelance"
+
+    def test_freelance_takes_precedence_over_contract(self):
+        from enrichment.handler import classify_contract_type
+        # "freelance" is more specific than "contract"
+        assert classify_contract_type("Contract", "Freelance contractor position") == "freelance"
+
+    def test_none_when_no_signal(self):
+        from enrichment.handler import classify_contract_type
+        assert classify_contract_type("", "Great opportunity to join our team.") is None
+
+    def test_none_when_both_empty(self):
+        from enrichment.handler import classify_contract_type
+        assert classify_contract_type(None, "") is None
+
+    def test_c2c_is_contract(self):
+        from enrichment.handler import classify_contract_type
+        assert classify_contract_type("", "Open to C2C or W2 contract arrangements.") == "contract"
