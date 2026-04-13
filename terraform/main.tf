@@ -87,16 +87,20 @@ module "data" {
   job_retention_days = var.job_retention_days
 }
 
-# Scoring Module (S3 resumes bucket + resume-parser Lambda)
+# Scoring Module (S3 resumes bucket + resume-parser + job-scorer Lambdas)
 module "scoring" {
   source = "./modules/scoring"
 
-  project_name              = var.project_name
-  environment               = var.environment
-  aws_region                = var.aws_region
-  dynamodb_users_table_name = module.data.dynamodb_users_table_name
-  dynamodb_users_table_arn  = module.data.dynamodb_users_table_arn
-  shared_layer_arn          = aws_lambda_layer_version.shared.arn
+  project_name                   = var.project_name
+  environment                    = var.environment
+  aws_region                     = var.aws_region
+  dynamodb_users_table_name      = module.data.dynamodb_users_table_name
+  dynamodb_users_table_arn       = module.data.dynamodb_users_table_arn
+  dynamodb_jobs_table_name       = module.data.dynamodb_jobs_table_name
+  dynamodb_jobs_table_arn        = module.data.dynamodb_jobs_table_arn
+  dynamodb_job_scores_table_name = module.data.dynamodb_job_scores_table_name
+  dynamodb_job_scores_table_arn  = module.data.dynamodb_job_scores_table_arn
+  shared_layer_arn               = aws_lambda_layer_version.shared.arn
 
   depends_on = [module.data]
 }
@@ -119,6 +123,8 @@ module "api" {
   dynamodb_job_scores_table_arn   = module.data.dynamodb_job_scores_table_arn
   resumes_bucket_name             = module.scoring.resumes_bucket_name
   resumes_bucket_arn              = module.scoring.resumes_bucket_arn
+  job_scorer_function_name        = module.scoring.job_scorer_function_name
+  job_scorer_function_arn         = module.scoring.job_scorer_function_arn
   domain_name                     = var.domain_name
   subdomain                       = var.subdomain
   shared_layer_arn                = aws_lambda_layer_version.shared.arn

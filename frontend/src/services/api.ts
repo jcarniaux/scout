@@ -1,5 +1,5 @@
 import { fetchAuthSession } from 'aws-amplify/auth';
-import { Job, JobFilters, PaginatedResponse, UserSettings, SearchLocation, ApplicationStatus, ResumeStatus } from '@/types';
+import { Job, JobFilters, PaginatedResponse, UserSettings, SearchLocation, ApplicationStatus, ResumeStatus, ScoringStatus } from '@/types';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -70,6 +70,9 @@ export const api = {
       },
       resumeStatus: (raw.resume_status ?? null) as ResumeStatus,
       resumeFilename: raw.resume_filename ?? null,
+      scoringStatus: (raw.scoring_status ?? null) as ScoringStatus,
+      lastScoredAt: raw.last_scored_at ?? null,
+      lastScoredCount: raw.last_scored_count ?? null,
     };
   },
 
@@ -110,6 +113,9 @@ export const api = {
       },
       resumeStatus: settings.resumeStatus,
       resumeFilename: settings.resumeFilename,
+      scoringStatus: settings.scoringStatus,
+      lastScoredAt: settings.lastScoredAt,
+      lastScoredCount: settings.lastScoredCount,
     };
   },
 
@@ -139,5 +145,14 @@ export const api = {
   /** Delete the user's resume from S3 and clear DynamoDB resume fields. */
   deleteResume: async (): Promise<void> => {
     await authFetch('/user/resume', { method: 'DELETE' });
+  },
+
+  /**
+   * Trigger async AI scoring of recent jobs against the user's resume.
+   * Returns 202 immediately — scoring runs in the background (~1-2 min).
+   * Poll getSettings() to check when scoringStatus transitions to "done".
+   */
+  triggerScoring: async (): Promise<{ message: string }> => {
+    return authFetch('/user/score-jobs', { method: 'POST' });
   },
 };

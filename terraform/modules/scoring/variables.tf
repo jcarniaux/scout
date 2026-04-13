@@ -27,3 +27,29 @@ variable "shared_layer_arn" {
   description = "ARN of the shared Lambda Layer"
   type        = string
 }
+
+variable "dynamodb_jobs_table_name" {
+  description = "DynamoDB jobs table name (read by job_scorer)"
+  type        = string
+}
+
+variable "dynamodb_jobs_table_arn" {
+  description = "DynamoDB jobs table ARN"
+  type        = string
+}
+
+variable "dynamodb_job_scores_table_name" {
+  description = "DynamoDB job scores table name"
+  type        = string
+}
+
+variable "dynamodb_job_scores_table_arn" {
+  description = "DynamoDB job scores table ARN"
+  type        = string
+}
+
+variable "bedrock_model_id" {
+  description = "Bedrock model ID for AI job scoring"
+  type        = string
+  default     = "anthropic.claude-3-haiku-20240307-v1:0"
+}

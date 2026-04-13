@@ -82,3 +82,13 @@ variable "resumes_bucket_arn" {
   description = "S3 bucket ARN for resume uploads"
   type        = string
 }
+
+variable "job_scorer_function_name" {
+  description = "Job scorer Lambda function name — injected into user_settings env so it can invoke scoring async"
+  type        = string
+}
+
+variable "job_scorer_function_arn" {
+  description = "Job scorer Lambda function ARN — used to scope the InvokeFunction IAM permission"
+  type        = string
+}

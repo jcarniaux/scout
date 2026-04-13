@@ -132,6 +132,23 @@ resource "aws_iam_role_policy" "lambda_bedrock_policy" {
   })
 }
 
+# Allow user_settings Lambda to invoke job_scorer asynchronously (InvokeType=Event)
+resource "aws_iam_role_policy" "lambda_invoke_job_scorer" {
+  name = "${var.project_name}-api-lambda-invoke-job-scorer"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["lambda:InvokeFunction"]
+        Resource = [var.job_scorer_function_arn]
+      }
+    ]
+  })
+}
+
 # S3 pre-signed URL generation (only the resumes bucket, user's own prefix)
 resource "aws_iam_role_policy" "lambda_s3_resumes_policy" {
   name = "${var.project_name}-api-lambda-s3-resumes-policy"
@@ -256,10 +273,11 @@ resource "aws_lambda_function" "get_user_settings" {
 
   environment {
     variables = {
-      USERS_TABLE    = var.dynamodb_users_table_name
-      RESUMES_BUCKET = var.resumes_bucket_name
-      AWS_ACCOUNT_ID = data.aws_caller_identity.current.account_id
-      SITE_URL       = "https://${var.subdomain}.${var.domain_name}"
+      USERS_TABLE              = var.dynamodb_users_table_name
+      RESUMES_BUCKET           = var.resumes_bucket_name
+      JOB_SCORER_FUNCTION_NAME = var.job_scorer_function_name
+      AWS_ACCOUNT_ID           = data.aws_caller_identity.current.account_id
+      SITE_URL                 = "https://${var.subdomain}.${var.domain_name}"
     }
   }
 
@@ -794,6 +812,80 @@ resource "aws_api_gateway_integration_response" "user_resume_upload_url_options"
   ]
 }
 
+# POST /user/score-jobs — triggers async AI scoring for the authenticated user
+resource "aws_api_gateway_resource" "user_score_jobs" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.user.id
+  path_part   = "score-jobs"
+}
+
+resource "aws_api_gateway_method" "post_score_jobs" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.user_score_jobs.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+  request_parameters = {
+    "method.request.header.Authorization" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "post_score_jobs" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.user_score_jobs.id
+  http_method             = aws_api_gateway_method.post_score_jobs.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_function.get_user_settings.invoke_arn
+}
+
+# /user/score-jobs OPTIONS (CORS preflight)
+resource "aws_api_gateway_method" "user_score_jobs_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.user_score_jobs.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "user_score_jobs_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.user_score_jobs.id
+  http_method = aws_api_gateway_method.user_score_jobs_options.http_method
+  type        = "MOCK"
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "user_score_jobs_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.user_score_jobs.id
+  http_method = aws_api_gateway_method.user_score_jobs_options.http_method
+  status_code = "200"
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+  depends_on = [aws_api_gateway_method.user_score_jobs_options]
+}
+
+resource "aws_api_gateway_integration_response" "user_score_jobs_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.user_score_jobs.id
+  http_method = aws_api_gateway_method.user_score_jobs_options.http_method
+  status_code = aws_api_gateway_method_response.user_score_jobs_options.status_code
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = local.cors_headers
+    "method.response.header.Access-Control-Allow-Methods" = local.cors_methods
+    "method.response.header.Access-Control-Allow-Origin"  = local.cors_origin
+  }
+  depends_on = [
+    aws_api_gateway_integration.user_score_jobs_options,
+    aws_api_gateway_method_response.user_score_jobs_options,
+  ]
+}
+
 # /user/settings OPTIONS
 resource "aws_api_gateway_method" "user_settings_options" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
@@ -859,12 +951,14 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_integration.put_user_settings.id,
       aws_api_gateway_integration.post_resume_upload_url.id,
       aws_api_gateway_integration.delete_resume.id,
+      aws_api_gateway_integration.post_score_jobs.id,
       aws_api_gateway_integration.jobs_options.id,
       aws_api_gateway_integration.job_detail_options.id,
       aws_api_gateway_integration.job_status_options.id,
       aws_api_gateway_integration.user_settings_options.id,
       aws_api_gateway_integration.user_resume_options.id,
       aws_api_gateway_integration.user_resume_upload_url_options.id,
+      aws_api_gateway_integration.user_score_jobs_options.id,
     ]))
   }
 
@@ -880,18 +974,21 @@ resource "aws_api_gateway_deployment" "main" {
     aws_api_gateway_integration.put_user_settings,
     aws_api_gateway_integration.post_resume_upload_url,
     aws_api_gateway_integration.delete_resume,
+    aws_api_gateway_integration.post_score_jobs,
     aws_api_gateway_integration.jobs_options,
     aws_api_gateway_integration.job_detail_options,
     aws_api_gateway_integration.job_status_options,
     aws_api_gateway_integration.user_settings_options,
     aws_api_gateway_integration.user_resume_options,
     aws_api_gateway_integration.user_resume_upload_url_options,
+    aws_api_gateway_integration.user_score_jobs_options,
     aws_api_gateway_integration_response.jobs_options,
     aws_api_gateway_integration_response.job_detail_options,
     aws_api_gateway_integration_response.job_status_options,
     aws_api_gateway_integration_response.user_settings_options,
     aws_api_gateway_integration_response.user_resume_options,
     aws_api_gateway_integration_response.user_resume_upload_url_options,
+    aws_api_gateway_integration_response.user_score_jobs_options,
   ]
 }
 

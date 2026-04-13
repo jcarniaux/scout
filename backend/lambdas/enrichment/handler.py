@@ -1,23 +1,15 @@
 """
 SQS-triggered enrichment Lambda for Scout job postings.
 Deduplicates jobs, enriches with benefits info and ratings, and stores in DynamoDB.
-
-AI Scoring:
-  After each new job is stored, Bedrock Claude Haiku scores it against every user
-  that has a ready resume. Scores are stored in the scout-job-scores table.
-  Scoring is always best-effort — any failure is logged and skipped so job
-  storage is never blocked.
 """
 import hashlib
 import json
 import logging
 import os
 import re
-import time
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 
-import boto3
 import requests
 
 from shared.db import DynamoDBHelper
@@ -31,14 +23,6 @@ logger.setLevel(logging.INFO)
 dynamodb = DynamoDBHelper()
 requests_session = requests.Session()
 requests_session.timeout = 5
-
-# ── Bedrock client (container-level, reused across warm invocations) ──────────
-_bedrock = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
-
-# ── Users-with-resumes cache (5-min TTL, per Lambda container) ────────────────
-_users_cache: List[Dict[str, Any]] = []
-_users_cache_time: float = 0.0
-_USERS_CACHE_TTL = 300  # seconds
 
 
 def compute_job_hash(title: str, company: str, location: str, job_url: str = "") -> str:
@@ -194,117 +178,6 @@ def fetch_glassdoor_rating(company: str, cache_table: str) -> Optional[float]:
     return None
 
 
-def _get_users_with_resumes() -> List[Dict[str, Any]]:
-    """
-    Return all users that have a ready resume, using a 5-minute in-process cache.
-
-    Scans the USERS_TABLE and filters for items where resume_status == "ready"
-    and resume_text is present. The scan result is cached at the container level
-    so a busy Lambda instance (many SQS messages) only hits DynamoDB once per
-    5-minute window instead of on every message.
-
-    Returns:
-        List of user items with at least {"pk": "USER#<sub>", "resume_text": "..."}
-    """
-    global _users_cache, _users_cache_time
-
-    users_table = os.environ.get("USERS_TABLE", "")
-    if not users_table:
-        return []
-
-    now = time.monotonic()
-    if _users_cache and (now - _users_cache_time) < _USERS_CACHE_TTL:
-        return _users_cache
-
-    try:
-        items, last_key = dynamodb.scan(
-            users_table,
-            filter_expression="resume_status = :s AND attribute_exists(resume_text)",
-            expression_attribute_values={":s": "ready"},
-            projection_expression="pk, resume_text",
-        )
-        # Handle pagination (unlikely to need it for a handful of users)
-        while last_key:
-            page, last_key = dynamodb.scan(
-                users_table,
-                filter_expression="resume_status = :s AND attribute_exists(resume_text)",
-                expression_attribute_values={":s": "ready"},
-                projection_expression="pk, resume_text",
-                exclusive_start_key=last_key,
-            )
-            items.extend(page)
-
-        _users_cache = items
-        _users_cache_time = now
-        logger.info(f"Loaded {len(items)} users with ready resumes (cache refreshed)")
-    except Exception as exc:
-        logger.error(f"Failed to load users with resumes: {exc}")
-        # Return stale cache rather than failing the whole invocation
-        return _users_cache
-
-    return _users_cache
-
-
-def _score_job_for_user(
-    job_item: Dict[str, Any],
-    user: Dict[str, Any],
-) -> Tuple[int, str]:
-    """
-    Ask Bedrock Claude Haiku to score a job against a user's resume.
-
-    The prompt is deliberately short to minimize token usage and latency with
-    Claude Haiku — the cheapest and fastest Bedrock model.
-
-    Args:
-        job_item: Enriched job dict (must have title, company, description)
-        user:     User item with resume_text
-
-    Returns:
-        Tuple of (score 0–100, one-sentence reasoning)
-
-    Raises:
-        Exception on any Bedrock or JSON parse failure (caller wraps in try/except)
-    """
-    model_id = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
-
-    resume_excerpt = (user.get("resume_text") or "")[:2000]
-    description_excerpt = (job_item.get("description") or "")[:1500]
-
-    prompt = (
-        "Score this job posting against the candidate's resume on a 0-100 scale.\n\n"
-        f"Resume:\n{resume_excerpt}\n\n"
-        f"Job Title: {job_item.get('title', '')}\n"
-        f"Company: {job_item.get('company', '')}\n"
-        f"Description:\n{description_excerpt}\n\n"
-        'Return ONLY valid JSON: {"score": <integer 0-100>, "reasoning": "<one concise sentence>"}'
-    )
-
-    body = json.dumps({
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 120,
-        "temperature": 0,
-        "messages": [{"role": "user", "content": prompt}],
-    })
-
-    response = _bedrock.invoke_model(
-        modelId=model_id,
-        contentType="application/json",
-        accept="application/json",
-        body=body,
-    )
-    raw = json.loads(response["body"].read())
-    text = raw["content"][0]["text"].strip()
-
-    # Strip any markdown code fences Haiku occasionally adds
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("`").strip()
-
-    result = json.loads(text)
-    score = max(0, min(100, int(result["score"])))
-    reasoning = str(result.get("reasoning", ""))[:500]
-    return score, reasoning
-
-
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Process SQS messages containing raw job postings.
@@ -319,7 +192,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     jobs_table = os.environ.get("JOBS_TABLE")
     glassdoor_cache_table = os.environ.get("GLASSDOOR_CACHE_TABLE")
-    job_scores_table = os.environ.get("JOB_SCORES_TABLE", "")
 
     if not jobs_table or not glassdoor_cache_table:
         logger.error("Missing required environment variables")
@@ -329,11 +201,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     total_stored = 0
     total_duplicates = 0
     total_filtered = 0
-    total_scored = 0
     batch_item_failures: List[Dict[str, str]] = []
-
-    # Load users-with-resumes once per invocation (cached at container level)
-    users_with_resumes = _get_users_with_resumes() if job_scores_table else []
 
     # Get TTL (60 days from now)
     ttl = int((datetime.utcnow() + timedelta(days=60)).timestamp())
@@ -423,34 +291,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 total_stored += 1
                 logger.info(f"Stored job: {title} at {company}")
 
-                # ── Per-user AI scoring (best-effort, never blocks storage) ──
-                if job_scores_table and users_with_resumes:
-                    for user in users_with_resumes:
-                        user_pk = user.get("pk", "")  # e.g. "USER#<sub>"
-                        if not user_pk:
-                            continue
-                        try:
-                            score, reasoning = _score_job_for_user(job_item, user)
-                            score_item = {
-                                "pk": user_pk,
-                                "sk": f"JOB#{job_hash}",
-                                "score": score,
-                                "reasoning": reasoning,
-                                "scored_at": datetime.utcnow().isoformat(),
-                                "ttl": ttl,
-                            }
-                            dynamodb.put_item(job_scores_table, score_item)
-                            total_scored += 1
-                            logger.info(
-                                f"Score {score}/100 for user {user_pk} on job {job_hash[:8]}… "
-                                f"({title} @ {company})"
-                            )
-                        except Exception as score_err:
-                            logger.warning(
-                                f"Non-blocking: scoring failed for user {user_pk} "
-                                f"on job {job_hash[:8]}…: {score_err}"
-                            )
-
             except Exception as e:
                 if "ConditionalCheckFailedException" in str(e):
                     total_duplicates += 1
@@ -494,8 +334,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     logger.info(
         f"Enrichment complete: {total_processed} processed, "
         f"{total_stored} stored, {total_duplicates} duplicates, "
-        f"{total_filtered} filtered, {total_scored} scored, "
-        f"{len(batch_item_failures)} failures"
+        f"{total_filtered} filtered, {len(batch_item_failures)} failures"
     )
 
     # Emit custom CloudWatch metrics via Embedded Metric Format
@@ -503,7 +342,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     emit_metric("Scout/Enrichment", "JobsStored", total_stored)
     emit_metric("Scout/Enrichment", "JobsDuplicate", total_duplicates)
     emit_metric("Scout/Enrichment", "JobsFiltered", total_filtered)
-    emit_metric("Scout/Enrichment", "JobsScored", total_scored)
     emit_metric("Scout/Enrichment", "BatchFailures", len(batch_item_failures))
 
     return {"batchItemFailures": batch_item_failures}

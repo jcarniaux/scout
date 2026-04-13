@@ -12,3 +12,13 @@ output "resume_parser_lambda_name" {
   description = "Resume parser Lambda function name"
   value       = aws_lambda_function.resume_parser.function_name
 }
+
+output "job_scorer_function_name" {
+  description = "Job scorer Lambda function name (used by user_settings to invoke async scoring)"
+  value       = aws_lambda_function.job_scorer.function_name
+}
+
+output "job_scorer_function_arn" {
+  description = "Job scorer Lambda function ARN"
+  value       = aws_lambda_function.job_scorer.arn
+}

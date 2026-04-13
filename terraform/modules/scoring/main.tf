@@ -195,3 +195,120 @@ resource "aws_s3_bucket_notification" "resumes_trigger" {
 
   depends_on = [aws_lambda_permission.s3_invoke_resume_parser]
 }
+
+# ─── IAM: Job Scorer Lambda ───────────────────────────────────────────────────
+resource "aws_iam_role" "job_scorer_role" {
+  name = "${var.project_name}-job-scorer-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "job_scorer_basic" {
+  role       = aws_iam_role.job_scorer_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "job_scorer_xray" {
+  role       = aws_iam_role.job_scorer_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
+}
+
+# Read jobs + users, write scores + scoring status back to users
+resource "aws_iam_role_policy" "job_scorer_dynamodb" {
+  name = "${var.project_name}-job-scorer-dynamodb"
+  role = aws_iam_role.job_scorer_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["dynamodb:Query", "dynamodb:GetItem"]
+        Resource = [
+          var.dynamodb_jobs_table_arn,
+          "${var.dynamodb_jobs_table_arn}/index/*",
+          var.dynamodb_users_table_arn,
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = ["dynamodb:PutItem", "dynamodb:UpdateItem"]
+        Resource = [
+          var.dynamodb_job_scores_table_arn,
+          var.dynamodb_users_table_arn,
+        ]
+      }
+    ]
+  })
+}
+
+# Scoped to Claude Haiku only — prevents accidental Sonnet/Opus invocations
+resource "aws_iam_role_policy" "job_scorer_bedrock" {
+  name = "${var.project_name}-job-scorer-bedrock"
+  role = aws_iam_role.job_scorer_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["bedrock:InvokeModel"]
+        Resource = ["arn:aws:bedrock:${var.aws_region}::foundation-model/${var.bedrock_model_id}"]
+      }
+    ]
+  })
+}
+
+# ─── CloudWatch Log Group: Job Scorer ────────────────────────────────────────
+resource "aws_cloudwatch_log_group" "job_scorer" {
+  name              = "/aws/lambda/${var.project_name}-job-scorer"
+  retention_in_days = 14
+
+  tags = {
+    Name = "${var.project_name}-job-scorer-logs"
+  }
+}
+
+# ─── Job Scorer Lambda ────────────────────────────────────────────────────────
+# Invoked asynchronously (InvokeType=Event) by POST /user/score-jobs.
+# Scores recent jobs against the user's resume using Bedrock Claude Haiku.
+# Timeout 300 s covers ~100 jobs × ~1.5 s per Bedrock call.
+resource "aws_lambda_function" "job_scorer" {
+  filename      = data.archive_file.lambda_placeholder.output_path
+  function_name = "${var.project_name}-job-scorer"
+  role          = aws_iam_role.job_scorer_role.arn
+  handler       = "scoring.job_scorer.handler"
+  runtime       = "python3.12"
+  timeout       = 300
+  memory_size   = 512
+  layers        = [var.shared_layer_arn]
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      JOBS_TABLE       = var.dynamodb_jobs_table_name
+      USERS_TABLE      = var.dynamodb_users_table_name
+      JOB_SCORES_TABLE = var.dynamodb_job_scores_table_name
+      BEDROCK_MODEL_ID = var.bedrock_model_id
+      AWS_ACCOUNT_ID   = data.aws_caller_identity.current.account_id
+    }
+  }
+
+  tags = {
+    Name = "${var.project_name}-job-scorer"
+  }
+
+  depends_on = [aws_cloudwatch_log_group.job_scorer]
+}

@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSettings, useUpdateSettings } from '@/hooks/useJobs';
-import { SearchLocation, ResumeStatus } from '@/types';
+import { SearchLocation, ResumeStatus, ScoringStatus } from '@/types';
 import { api } from '@/services/api';
-import { Check, AlertCircle, Plus, X, MapPin, Upload, Trash2, FileText, Loader2 } from 'lucide-react';
+import { Check, AlertCircle, Plus, X, MapPin, Upload, Trash2, FileText, Loader2, Sparkles } from 'lucide-react';
 
 const DEFAULT_SEARCH_PREFS = {
   roleQueries: [] as string[],
@@ -36,6 +36,13 @@ export function Settings() {
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // AI scoring state
+  const [scoringStatus, setScoringStatus] = useState<ScoringStatus>(null);
+  const [lastScoredAt, setLastScoredAt] = useState<string | null>(null);
+  const [lastScoredCount, setLastScoredCount] = useState<number | null>(null);
+  const [isTriggeringScoring, setIsTriggeringScoring] = useState(false);
+  const [scoringError, setScoringError] = useState<string | null>(null);
+
   const [showSuccess, setShowSuccess] = useState(false);
 
   useEffect(() => {
@@ -49,6 +56,9 @@ export function Settings() {
       setSalaryMax(sp.salaryMax ? String(sp.salaryMax) : '');
       setResumeStatus(settings.resumeStatus ?? null);
       setResumeFilename(settings.resumeFilename ?? null);
+      setScoringStatus(settings.scoringStatus ?? null);
+      setLastScoredAt(settings.lastScoredAt ?? null);
+      setLastScoredCount(settings.lastScoredCount ?? null);
     }
   }, [settings]);
 
@@ -125,6 +135,19 @@ export function Settings() {
     }
   };
 
+  const handleTriggerScoring = async () => {
+    setScoringError(null);
+    setIsTriggeringScoring(true);
+    try {
+      await api.triggerScoring();
+      setScoringStatus('scoring');
+    } catch (err) {
+      setScoringError(err instanceof Error ? err.message : 'Failed to start scoring. Please try again.');
+    } finally {
+      setIsTriggeringScoring(false);
+    }
+  };
+
   const handleSave = async () => {
     if (settings) {
       updateSettings.mutate(
@@ -140,6 +163,9 @@ export function Settings() {
           },
           resumeStatus,
           resumeFilename,
+          scoringStatus,
+          lastScoredAt,
+          lastScoredCount,
         },
         {
           onSuccess: () => {
@@ -418,6 +444,50 @@ export function Settings() {
             <p className="mt-2 text-sm text-red-600 dark:text-red-400 flex items-center gap-1.5">
               <AlertCircle className="w-4 h-4 shrink-0" /> {uploadError}
             </p>
+          )}
+
+          {/* AI Scoring trigger — only available once resume is ready */}
+          {resumeStatus === 'ready' && (
+            <div className="mt-6 pt-5 border-t border-slate-200 dark:border-gray-700">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-800 dark:text-gray-200">AI Match Scoring</p>
+                  {scoringStatus === 'scoring' && (
+                    <p className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">
+                      Scoring in progress — check back in a minute…
+                    </p>
+                  )}
+                  {scoringStatus === 'done' && lastScoredAt && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                      Last scored{lastScoredCount != null ? ` ${lastScoredCount} jobs` : ''} on{' '}
+                      {new Date(lastScoredAt).toLocaleString()}
+                    </p>
+                  )}
+                  {!scoringStatus && (
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                      Not scored yet — click to run AI matching against your resume
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleTriggerScoring}
+                  disabled={isTriggeringScoring || scoringStatus === 'scoring'}
+                  className="shrink-0 inline-flex items-center gap-2 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isTriggeringScoring || scoringStatus === 'scoring'
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : <Sparkles className="w-4 h-4" />
+                  }
+                  {scoringStatus === 'scoring' ? 'Scoring…' : 'Score My Jobs'}
+                </button>
+              </div>
+              {scoringError && (
+                <p className="mt-2 text-sm text-red-600 dark:text-red-400 flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4 shrink-0" /> {scoringError}
+                </p>
+              )}
+            </div>
           )}
         </div>
 

@@ -2,10 +2,11 @@
 User settings and resume management API handlers.
 
 Routes (all require Cognito auth):
-  GET    /user/settings            — fetch preferences + resume status
+  GET    /user/settings            — fetch preferences + resume status + scoring status
   PUT    /user/settings            — update preferences
   POST   /user/resume/upload-url   — generate a short-lived S3 pre-signed PUT URL
   DELETE /user/resume              — delete resume from S3 and clear DynamoDB fields
+  POST   /user/score-jobs          — trigger async AI scoring for the current user
 """
 import json
 import logging
@@ -98,8 +99,12 @@ def get_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "weekly_report": item.get("weekly_report", False),
             "search_preferences": _serialize_search_prefs(item),
             # Resume fields (None until a resume is uploaded and parsed)
-            "resume_status":   item.get("resume_status"),    # None | "processing" | "ready" | "error"
-            "resume_filename": item.get("resume_filename"),
+            "resume_status":      item.get("resume_status"),    # None | "processing" | "ready" | "error"
+            "resume_filename":    item.get("resume_filename"),
+            # Scoring fields
+            "scoring_status":     item.get("scoring_status"),   # None | "scoring" | "done"
+            "last_scored_at":     item.get("last_scored_at"),
+            "last_scored_count":  item.get("last_scored_count"),
         })
 
     except Exception as e:
@@ -341,6 +346,67 @@ def delete_resume(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return error_response("Failed to delete resume", 500)
 
 
+def trigger_scoring(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """
+    Handler for POST /user/score-jobs
+
+    Validates the user has a ready resume, marks scoring_status = "scoring",
+    then invokes the scout-job-scorer Lambda asynchronously (fire-and-forget).
+    Returns 202 immediately — scores appear in the UI on the next page refresh
+    (typically within 1–2 minutes depending on job count).
+    """
+    user_sub = get_user_sub(event)
+    if not user_sub:
+        return unauthorized_response("Unauthorized")
+
+    users_table = os.environ.get("USERS_TABLE", "")
+    scorer_function = os.environ.get("JOB_SCORER_FUNCTION_NAME", "")
+
+    if not users_table or not scorer_function:
+        return error_response("Missing environment variables", 500)
+
+    user_pk = f"USER#{user_sub}"
+
+    try:
+        # Guard: require a ready resume before scoring
+        user = dynamodb.get_item(users_table, {"pk": user_pk})
+        if not user or user.get("resume_status") != "ready":
+            return error_response(
+                "Resume not ready. Upload and wait for processing to complete before scoring.", 400
+            )
+
+        # Prevent concurrent scoring runs
+        if user.get("scoring_status") == "scoring":
+            return error_response("Scoring is already in progress.", 409)
+
+        # Mark as in-progress so the UI can show a spinner immediately
+        now = datetime.utcnow().isoformat()
+        dynamodb.update_item(
+            users_table,
+            key={"pk": user_pk},
+            update_expression="SET scoring_status = :s, scoring_started_at = :t",
+            expression_attribute_values={":s": "scoring", ":t": now},
+        )
+
+        # Fire-and-forget: InvokeType=Event returns 202 from Lambda immediately
+        lambda_client = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+        lambda_client.invoke(
+            FunctionName=scorer_function,
+            InvocationType="Event",
+            Payload=json.dumps({"user_pk": user_pk, "user_sub": user_sub}).encode(),
+        )
+
+        logger.info(f"Async scoring triggered for {user_pk} via {scorer_function}")
+        return success_response(
+            {"message": "Scoring started. Refresh in a minute to see your match scores."},
+            status_code=202,
+        )
+
+    except Exception as exc:
+        logger.error(f"Error triggering scoring for {user_pk}: {exc}", exc_info=True)
+        return error_response("Failed to start scoring", 500)
+
+
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Main handler dispatcher — routes on resource path + HTTP method.
@@ -350,6 +416,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
       PUT    /user/settings           → put_settings
       POST   /user/resume/upload-url  → get_resume_upload_url
       DELETE /user/resume             → delete_resume
+      POST   /user/score-jobs         → trigger_scoring
     """
     http_method = event.get("httpMethod", "GET").upper()
     resource = event.get("resource", "")
@@ -359,6 +426,9 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     if resource == "/user/resume" and http_method == "DELETE":
         return delete_resume(event, context)
+
+    if resource == "/user/score-jobs" and http_method == "POST":
+        return trigger_scoring(event, context)
 
     # Default: /user/settings
     if http_method == "PUT":

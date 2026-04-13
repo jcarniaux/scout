@@ -61,6 +61,8 @@ export interface SearchPreferences {
 
 export type ResumeStatus = 'processing' | 'ready' | 'error' | 'deleted' | null;
 
+export type ScoringStatus = 'scoring' | 'done' | null;
+
 export interface UserSettings {
   email: string;
   dailyReport: boolean;
@@ -69,6 +71,12 @@ export interface UserSettings {
   /** null until a resume has been uploaded */
   resumeStatus: ResumeStatus;
   resumeFilename: string | null;
+  /** null until the first scoring run completes */
+  scoringStatus: ScoringStatus;
+  /** ISO timestamp of the last completed scoring run */
+  lastScoredAt: string | null;
+  /** Number of jobs scored in the last run */
+  lastScoredCount: number | null;
 }
 
 export interface PaginatedResponse<T> {

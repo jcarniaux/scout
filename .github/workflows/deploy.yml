@@ -396,19 +396,26 @@ jobs:
             echo "  ✓ $fn deployed"
           done
 
-      - name: Deploy resume-parser Lambda
+      - name: Deploy scoring Lambdas
         run: |
-          aws lambda wait function-updated --function-name scout-resume-parser
-          aws lambda update-function-code \
-            --function-name scout-resume-parser \
-            --zip-file fileb://build/scoring.zip \
-            --publish > /dev/null
-          aws lambda wait function-updated --function-name scout-resume-parser
-          aws lambda update-function-configuration \
-            --function-name scout-resume-parser \
-            --layers "${{ steps.layer.outputs.layer_arn }}" > /dev/null
-          aws lambda wait function-updated --function-name scout-resume-parser
-          echo "✓ scout-resume-parser deployed"
+          FUNCTIONS=(
+            "scout-resume-parser"
+            "scout-job-scorer"
+          )
+          for fn in "${FUNCTIONS[@]}"; do
+            echo "Deploying $fn..."
+            aws lambda wait function-updated --function-name "$fn"
+            aws lambda update-function-code \
+              --function-name "$fn" \
+              --zip-file fileb://build/scoring.zip \
+              --publish > /dev/null
+            aws lambda wait function-updated --function-name "$fn"
+            aws lambda update-function-configuration \
+              --function-name "$fn" \
+              --layers "${{ steps.layer.outputs.layer_arn }}" > /dev/null
+            aws lambda wait function-updated --function-name "$fn"
+            echo "  ✓ $fn deployed"
+          done
 
       - name: Deploy report Lambdas
         run: |
