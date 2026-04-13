@@ -126,6 +126,42 @@ resource "aws_dynamodb_table" "users" {
   }
 }
 
+# DynamoDB table: scout-job-scores
+# Per-user AI match scores — pk=USER#{sub}, sk=JOB#{hash}.
+# Deletion protection intentionally omitted: scores are derived data
+# that can be recomputed from resumes + job descriptions at any time.
+resource "aws_dynamodb_table" "job_scores" {
+  name         = "${var.project_name}-job-scores"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "pk"
+  range_key    = "sk"
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+
+  # TTL mirrors the jobs table (60-day default) so scores are purged
+  # automatically when the corresponding job expires.
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  tags = {
+    Name = "${var.project_name}-job-scores"
+  }
+}
+
 # DynamoDB table: scout-glassdoor-cache
 resource "aws_dynamodb_table" "glassdoor_cache" {
   name         = "${var.project_name}-glassdoor-cache"

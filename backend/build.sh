@@ -82,6 +82,7 @@ build_zip crawlers
 build_zip enrichment
 build_zip api
 build_zip reports
+build_zip scoring
 
 # ── Dependency layer ──────────────────────────────────────────────────────────
 info "Building dependency layer..."
@@ -99,15 +100,20 @@ find "$LAYER_PYTHON" -type d -name "tests"       -exec rm -rf {} + 2>/dev/null |
 find "$LAYER_PYTHON" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find "$LAYER_PYTHON" -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
 
-# Verify critical package is importable before zipping (fail loudly if missing)
+# Verify critical packages are importable before zipping (fail loudly if missing)
 python3 - "$LAYER_PYTHON" <<'PYVERIFY'
 import sys
 sys.path.insert(0, sys.argv[1])
-try:
-    import jobspy
-    print(f"✓ jobspy importable from {sys.argv[1]}")
-except ImportError as e:
-    print(f"✗ jobspy import failed: {e}", file=sys.stderr)
+packages = {"jobspy": "jobspy", "pdfminer": "pdfminer"}
+failed = []
+for label, mod in packages.items():
+    try:
+        __import__(mod)
+        print(f"✓ {label} importable from {sys.argv[1]}")
+    except ImportError as e:
+        print(f"✗ {label} import failed: {e}", file=sys.stderr)
+        failed.append(label)
+if failed:
     sys.exit(1)
 PYVERIFY
 
@@ -148,4 +154,7 @@ echo ""
 echo "  reports.zip"
 echo "    reports.daily_report.handler    → reports/daily_report.py::handler"
 echo "    reports.weekly_report.handler   → reports/weekly_report.py::handler"
+echo ""
+echo "  scoring.zip"
+echo "    scoring.resume_parser.handler   → scoring/resume_parser.py::handler"
 echo ""

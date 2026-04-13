@@ -37,10 +37,11 @@ export function FilterBar({ filters, onFiltersChange, activeFilterCount }: Filte
     { value: 'ziprecruiter', label: 'ZipRecruiter' },
   ];
 
-  const sortOptions: Array<{ value: 'date' | 'salary' | 'rating'; label: string }> = [
+  const sortOptions: Array<{ value: 'date' | 'salary' | 'rating' | 'match'; label: string }> = [
     { value: 'date',   label: 'Most Recent'    },
     { value: 'salary', label: 'Highest Salary' },
     { value: 'rating', label: 'Best Rated'     },
+    { value: 'match',  label: 'Best Match ✦'   },
   ];
 
   const pillClass = (active: boolean) =>
@@ -154,7 +155,7 @@ export function FilterBar({ filters, onFiltersChange, activeFilterCount }: Filte
           <label className={labelClass}>Sort By</label>
           <select
             value={filters.sort || 'date'}
-            onChange={(e) => updateFilter('sort', e.target.value as 'date' | 'salary' | 'rating')}
+            onChange={(e) => updateFilter('sort', e.target.value as 'date' | 'salary' | 'rating' | 'match')}
             className={selectClass}
           >
             {sortOptions.map((option) => (

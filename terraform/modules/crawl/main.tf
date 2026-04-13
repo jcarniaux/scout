@@ -455,6 +455,27 @@ resource "aws_iam_role_policy" "enrichment_policy" {
         ]
       },
       {
+        # Scan users to get their resume_text for per-user scoring
+        Effect   = "Allow"
+        Action   = ["dynamodb:Scan"]
+        Resource = [var.dynamodb_users_table_arn]
+      },
+      {
+        # Write per-user job scores
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+        ]
+        Resource = [var.dynamodb_job_scores_table_arn]
+      },
+      {
+        # Bedrock: invoke Claude Haiku for job scoring
+        Effect   = "Allow"
+        Action   = ["bedrock:InvokeModel"]
+        Resource = ["arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"]
+      },
+      {
         Effect = "Allow"
         Action = [
           "secretsmanager:GetSecretValue"
@@ -484,7 +505,10 @@ resource "aws_lambda_function" "enrichment_lambda" {
     variables = {
       JOBS_TABLE            = var.dynamodb_jobs_table_name
       GLASSDOOR_CACHE_TABLE = var.dynamodb_glassdoor_cache_table_name
+      USERS_TABLE           = var.dynamodb_users_table_name
+      JOB_SCORES_TABLE      = var.dynamodb_job_scores_table_name
       SECRETS_ARN           = aws_secretsmanager_secret.scraper_keys.arn
+      BEDROCK_MODEL_ID      = "anthropic.claude-3-haiku-20240307-v1:0"
     }
   }
 

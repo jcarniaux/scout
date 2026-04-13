@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSettings, useUpdateSettings } from '@/hooks/useJobs';
-import { SearchLocation } from '@/types';
-import { Check, AlertCircle, Plus, X, MapPin } from 'lucide-react';
+import { SearchLocation, ResumeStatus } from '@/types';
+import { api } from '@/services/api';
+import { Check, AlertCircle, Plus, X, MapPin, Upload, Trash2, FileText, Loader2 } from 'lucide-react';
 
 const DEFAULT_SEARCH_PREFS = {
   roleQueries: [] as string[],
@@ -27,6 +28,14 @@ export function Settings() {
   const [salaryMin, setSalaryMin] = useState<string>('');
   const [salaryMax, setSalaryMax] = useState<string>('');
 
+  // Resume upload state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [resumeStatus, setResumeStatus] = useState<ResumeStatus>(null);
+  const [resumeFilename, setResumeFilename] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const [showSuccess, setShowSuccess] = useState(false);
 
   useEffect(() => {
@@ -38,6 +47,8 @@ export function Settings() {
       setLocations(sp.locations ?? []);
       setSalaryMin(sp.salaryMin ? String(sp.salaryMin) : '');
       setSalaryMax(sp.salaryMax ? String(sp.salaryMax) : '');
+      setResumeStatus(settings.resumeStatus ?? null);
+      setResumeFilename(settings.resumeFilename ?? null);
     }
   }, [settings]);
 
@@ -71,6 +82,49 @@ export function Settings() {
     setLocations(locations.filter((_, i) => i !== index));
   };
 
+  const handleResumeUpload = async (file: File) => {
+    if (!file || file.type !== 'application/pdf') {
+      setUploadError('Please select a PDF file.');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError('File must be under 10 MB.');
+      return;
+    }
+
+    setUploadError(null);
+    setIsUploading(true);
+    setResumeStatus('processing');
+
+    try {
+      const { uploadUrl } = await api.getResumeUploadUrl();
+      await api.uploadResumeTos3(uploadUrl, file);
+      setResumeFilename(file.name);
+      // Status stays "processing" — the resume_parser Lambda will set it to "ready"
+      // Poll on next page load via getSettings
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
+      setResumeStatus(null);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleResumeDelete = async () => {
+    setIsDeleting(true);
+    setUploadError(null);
+    try {
+      await api.deleteResume();
+      setResumeStatus(null);
+      setResumeFilename(null);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Failed to delete resume.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const handleSave = async () => {
     if (settings) {
       updateSettings.mutate(
@@ -84,6 +138,8 @@ export function Settings() {
             salaryMin: salaryMin ? parseInt(salaryMin, 10) : null,
             salaryMax: salaryMax ? parseInt(salaryMax, 10) : null,
           },
+          resumeStatus,
+          resumeFilename,
         },
         {
           onSuccess: () => {
@@ -279,6 +335,90 @@ export function Settings() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* ── Resume & AI Matching ── */}
+        <div className={sectionClass}>
+          <h2 className={headingClass}>Resume &amp; AI Matching</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+            Upload your resume (PDF) and Scout will automatically score each job posting against
+            your background using Amazon Bedrock. Scores appear on every job card.
+          </p>
+
+          {/* Current resume state */}
+          {resumeStatus === 'ready' && resumeFilename && (
+            <div className="flex items-center gap-3 p-4 mb-4 rounded-lg bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800">
+              <FileText className="w-5 h-5 text-green-600 dark:text-green-400 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-green-700 dark:text-green-300 truncate">
+                  {resumeFilename}
+                </p>
+                <p className="text-xs text-green-600 dark:text-green-400">Resume ready — AI scoring active</p>
+              </div>
+              <button
+                onClick={handleResumeDelete}
+                disabled={isDeleting}
+                className="shrink-0 p-1.5 text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900 rounded-md transition-colors disabled:opacity-50"
+                title="Delete resume"
+              >
+                {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              </button>
+            </div>
+          )}
+
+          {resumeStatus === 'processing' && (
+            <div className="flex items-center gap-3 p-4 mb-4 rounded-lg bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800">
+              <Loader2 className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 animate-spin" />
+              <p className="text-sm text-blue-700 dark:text-blue-300">
+                Processing your resume… This usually takes under 30 seconds.
+              </p>
+            </div>
+          )}
+
+          {resumeStatus === 'error' && (
+            <div className="flex items-center gap-3 p-4 mb-4 rounded-lg bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800">
+              <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 shrink-0" />
+              <p className="text-sm text-red-700 dark:text-red-300">
+                Resume processing failed (scanned PDF or corrupted file). Please upload a text-based PDF.
+              </p>
+            </div>
+          )}
+
+          {/* Upload control */}
+          <div className="flex flex-col sm:flex-row items-start gap-3">
+            <label className="flex-1 cursor-pointer">
+              <div className={`flex items-center gap-2 px-4 py-2.5 border-2 border-dashed rounded-lg transition-colors ${
+                isUploading
+                  ? 'border-gray-200 dark:border-gray-600 text-gray-400'
+                  : 'border-slate-300 dark:border-gray-600 hover:border-primary dark:hover:border-blue-500 text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-blue-400'
+              }`}>
+                {isUploading
+                  ? <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                  : <Upload className="w-4 h-4 shrink-0" />
+                }
+                <span className="text-sm font-medium">
+                  {isUploading ? 'Uploading…' : resumeStatus === 'ready' ? 'Replace Resume (PDF)' : 'Upload Resume (PDF)'}
+                </span>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf"
+                className="sr-only"
+                disabled={isUploading}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleResumeUpload(file);
+                }}
+              />
+            </label>
+          </div>
+
+          {uploadError && (
+            <p className="mt-2 text-sm text-red-600 dark:text-red-400 flex items-center gap-1.5">
+              <AlertCircle className="w-4 h-4 shrink-0" /> {uploadError}
+            </p>
+          )}
         </div>
 
         {/* ── Email Notifications ── */}

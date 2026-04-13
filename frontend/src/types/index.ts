@@ -19,6 +19,10 @@ export interface Job {
   jobType: string | null;
   applicationStatus: ApplicationStatus;
   notes: string | null;
+  /** AI match score 0–100, null when no resume has been uploaded */
+  matchScore: number | null;
+  /** One-sentence explanation from Bedrock */
+  matchReasoning: string | null;
 }
 
 export type ApplicationStatus =
@@ -38,7 +42,7 @@ export interface JobFilters {
   dateRange?: DateRange;
   status?: ApplicationStatus;
   search?: string;
-  sort?: 'date' | 'salary' | 'rating';
+  sort?: 'date' | 'salary' | 'rating' | 'match';
   sources?: string[];
 }
 
@@ -55,11 +59,16 @@ export interface SearchPreferences {
   salaryMax: number | null;
 }
 
+export type ResumeStatus = 'processing' | 'ready' | 'error' | 'deleted' | null;
+
 export interface UserSettings {
   email: string;
   dailyReport: boolean;
   weeklyReport: boolean;
   searchPreferences: SearchPreferences;
+  /** null until a resume has been uploaded */
+  resumeStatus: ResumeStatus;
+  resumeFilename: string | null;
 }
 
 export interface PaginatedResponse<T> {

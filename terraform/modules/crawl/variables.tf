@@ -62,3 +62,13 @@ variable "shared_layer_arn" {
   description = "ARN of the shared Lambda Layer (db, models, crawler_utils, etc.)"
   type        = string
 }
+
+variable "dynamodb_job_scores_table_name" {
+  description = "DynamoDB job scores table name"
+  type        = string
+}
+
+variable "dynamodb_job_scores_table_arn" {
+  description = "DynamoDB job scores table ARN"
+  type        = string
+}

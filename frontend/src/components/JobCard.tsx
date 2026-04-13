@@ -24,6 +24,27 @@ const sourceColors: Record<string, string> = {
   dice:          'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
 };
 
+/** Color-coded match score badge (green ≥80, yellow 60–79, red <60, gray = no score) */
+function MatchScoreBadge({ score, reasoning }: { score: number | null; reasoning: string | null }) {
+  if (score === null) return null;
+
+  const colorClass =
+    score >= 80
+      ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-green-200 dark:border-green-800'
+      : score >= 60
+      ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800'
+      : 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 border-red-200 dark:border-red-800';
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${colorClass}`}
+      title={reasoning ?? undefined}
+    >
+      ✦ {score}% match
+    </span>
+  );
+}
+
 export function JobCard({ job }: JobCardProps) {
   const updateStatus = useUpdateStatus();
 
@@ -56,13 +77,14 @@ export function JobCard({ job }: JobCardProps) {
         </div>
       </div>
 
-      {/* Row 2 — company · rating · source · location · date · salary · View Posting */}
+      {/* Row 2 — company · rating · source · match score · location · date · salary · View Posting */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm mb-2">
         <span className="font-medium text-gray-700 dark:text-gray-200">{job.company}</span>
         <RatingBadge rating={job.glassdoorRating} glassdoorUrl={job.glassdoorUrl} />
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${sourceClass}`}>
           {sourceLabel}
         </span>
+        <MatchScoreBadge score={job.matchScore} reasoning={job.matchReasoning} />
         <span className="text-gray-300 dark:text-gray-600">·</span>
         <span className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
           <MapPin className="w-3.5 h-3.5 shrink-0" />
@@ -118,6 +140,13 @@ export function JobCard({ job }: JobCardProps) {
             </span>
           )}
         </div>
+      )}
+
+      {/* AI match reasoning (optional — only shown when score is available) */}
+      {job.matchScore !== null && job.matchReasoning && (
+        <p className="text-xs text-gray-500 dark:text-gray-400 italic mb-2 line-clamp-2">
+          {job.matchReasoning}
+        </p>
       )}
 
       {/* Notes (optional) */}

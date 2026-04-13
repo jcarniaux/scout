@@ -1,6 +1,11 @@
 """
-GET and PUT /user/settings API handlers.
-Manage user preferences and notification settings.
+User settings and resume management API handlers.
+
+Routes (all require Cognito auth):
+  GET    /user/settings            — fetch preferences + resume status
+  PUT    /user/settings            — update preferences
+  POST   /user/resume/upload-url   — generate a short-lived S3 pre-signed PUT URL
+  DELETE /user/resume              — delete resume from S3 and clear DynamoDB fields
 """
 import json
 import logging
@@ -8,6 +13,8 @@ import os
 from datetime import datetime
 from decimal import Decimal
 from typing import Dict, Any, Optional
+
+import boto3
 
 from shared.db import DynamoDBHelper
 from shared.models import dynamo_deserialize
@@ -17,6 +24,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 dynamodb = DynamoDBHelper()
+_s3 = boto3.client("s3")
 
 
 def get_user_sub(event: Dict[str, Any]) -> Optional[str]:
@@ -89,6 +97,9 @@ def get_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "daily_report": item.get("daily_report", False),
             "weekly_report": item.get("weekly_report", False),
             "search_preferences": _serialize_search_prefs(item),
+            # Resume fields (None until a resume is uploaded and parsed)
+            "resume_status":   item.get("resume_status"),    # None | "processing" | "ready" | "error"
+            "resume_filename": item.get("resume_filename"),
         })
 
     except Exception as e:
@@ -221,10 +232,135 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return error_response("Error updating settings", 500)
 
 
-def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """Main handler dispatcher"""
-    http_method = event.get("httpMethod", "GET").upper()
+def get_resume_upload_url(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """
+    Handler for POST /user/resume/upload-url
 
+    Returns a pre-signed S3 PUT URL the browser can use to upload a PDF
+    directly to S3, bypassing the Lambda/API Gateway size limits.
+
+    The S3 key is always `resumes/{user_sub}/resume.pdf` — one slot per user.
+    The resume_parser Lambda fires automatically via S3 ObjectCreated notification
+    once the upload completes.
+
+    Additionally, immediately marks resume_status = "processing" in DynamoDB so
+    the frontend can show an upload-in-progress state without waiting for S3
+    to confirm the file landed.
+    """
+    user_sub = get_user_sub(event)
+    if not user_sub:
+        return unauthorized_response("Unauthorized")
+
+    resumes_bucket = os.environ.get("RESUMES_BUCKET", "")
+    users_table = os.environ.get("USERS_TABLE", "")
+
+    if not resumes_bucket or not users_table:
+        return error_response("Missing environment variables", 500)
+
+    s3_key = f"resumes/{user_sub}/resume.pdf"
+
+    try:
+        # Generate a pre-signed PUT URL (5-minute expiry).
+        # ContentType condition is enforced so only PDFs are accepted.
+        upload_url = _s3.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": resumes_bucket,
+                "Key": s3_key,
+                "ContentType": "application/pdf",
+            },
+            ExpiresIn=300,
+        )
+
+        # Mark status as "processing" immediately so the UI can react
+        now = datetime.utcnow().isoformat()
+        dynamodb.update_item(
+            users_table,
+            key={"pk": f"USER#{user_sub}"},
+            update_expression="SET resume_status = :s, resume_updated_at = :t",
+            expression_attribute_values={":s": "processing", ":t": now},
+        )
+
+        logger.info(f"Generated resume upload URL for user {user_sub}")
+        return success_response({
+            "uploadUrl": upload_url,
+            "s3Key": s3_key,
+            "expiresIn": 300,
+        })
+
+    except Exception as exc:
+        logger.error(f"Error generating upload URL for user {user_sub}: {exc}", exc_info=True)
+        return error_response("Failed to generate upload URL", 500)
+
+
+def delete_resume(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """
+    Handler for DELETE /user/resume
+
+    Removes the resume PDF from S3 and clears all resume-related fields
+    from the user's DynamoDB record. After this call, the user will no
+    longer receive AI match scores until they upload a new resume.
+    """
+    user_sub = get_user_sub(event)
+    if not user_sub:
+        return unauthorized_response("Unauthorized")
+
+    resumes_bucket = os.environ.get("RESUMES_BUCKET", "")
+    users_table = os.environ.get("USERS_TABLE", "")
+
+    if not resumes_bucket or not users_table:
+        return error_response("Missing environment variables", 500)
+
+    s3_key = f"resumes/{user_sub}/resume.pdf"
+
+    try:
+        # Best-effort S3 delete (no error if the object doesn't exist)
+        try:
+            _s3.delete_object(Bucket=resumes_bucket, Key=s3_key)
+            logger.info(f"Deleted resume from S3: s3://{resumes_bucket}/{s3_key}")
+        except Exception as s3_err:
+            logger.warning(f"Non-blocking: S3 delete failed for {s3_key}: {s3_err}")
+
+        # Clear all resume fields from DynamoDB
+        now = datetime.utcnow().isoformat()
+        dynamodb.update_item(
+            users_table,
+            key={"pk": f"USER#{user_sub}"},
+            update_expression=(
+                "REMOVE resume_text, resume_filename "
+                "SET resume_status = :s, resume_updated_at = :t"
+            ),
+            expression_attribute_values={":s": "deleted", ":t": now},
+        )
+
+        logger.info(f"Cleared resume data for user {user_sub}")
+        return success_response({"message": "Resume deleted successfully"})
+
+    except Exception as exc:
+        logger.error(f"Error deleting resume for user {user_sub}: {exc}", exc_info=True)
+        return error_response("Failed to delete resume", 500)
+
+
+def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """
+    Main handler dispatcher — routes on resource path + HTTP method.
+
+    Route table:
+      GET    /user/settings           → get_settings
+      PUT    /user/settings           → put_settings
+      POST   /user/resume/upload-url  → get_resume_upload_url
+      DELETE /user/resume             → delete_resume
+    """
+    http_method = event.get("httpMethod", "GET").upper()
+    resource = event.get("resource", "")
+
+    if resource == "/user/resume/upload-url" and http_method == "POST":
+        return get_resume_upload_url(event, context)
+
+    if resource == "/user/resume" and http_method == "DELETE":
+        return delete_resume(event, context)
+
+    # Default: /user/settings
     if http_method == "PUT":
         return put_settings(event, context)
     elif http_method == "GET":

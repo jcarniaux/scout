@@ -230,6 +230,35 @@ class DynamoDBHelper:
             logger.error(f"Error batch writing to {table_name}: {e}")
             raise
 
+    def batch_get_items(
+        self, table_name: str, keys: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch up to 100 items by primary key in a single BatchGetItem call.
+
+        DynamoDB limits BatchGetItem to 100 keys and 16 MB per call. For Scout's
+        page sizes (10–50 jobs × handful of users) this is always a single round-trip.
+
+        Args:
+            table_name: Name of the table
+            keys: List of primary key dicts e.g. [{"pk": "USER#x", "sk": "JOB#y"}, ...]
+
+        Returns:
+            List of found items (order not guaranteed; missing keys are silently omitted)
+        """
+        if not keys:
+            return []
+        try:
+            response = self.dynamodb.meta.client.batch_get_item(
+                RequestItems={
+                    table_name: {"Keys": keys}
+                }
+            )
+            return response.get("Responses", {}).get(table_name, [])
+        except Exception as e:
+            logger.error(f"Error batch-getting items from {table_name}: {e}")
+            raise
+
     def delete_item(self, table_name: str, key: Dict[str, Any]) -> bool:
         """
         Delete an item from DynamoDB.

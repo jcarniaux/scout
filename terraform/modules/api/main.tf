@@ -1,3 +1,5 @@
+data "aws_caller_identity" "current" {}
+
 # Placeholder zip file for Lambda functions
 data "archive_file" "lambda_placeholder" {
   type        = "zip"
@@ -102,8 +104,51 @@ resource "aws_iam_role_policy" "lambda_dynamodb_policy" {
           "${var.dynamodb_jobs_table_arn}/index/*",
           var.dynamodb_user_status_table_arn,
           "${var.dynamodb_user_status_table_arn}/index/*",
-          var.dynamodb_users_table_arn
+          var.dynamodb_users_table_arn,
+          var.dynamodb_job_scores_table_arn,
+          "${var.dynamodb_job_scores_table_arn}/index/*",
         ]
+      }
+    ]
+  })
+}
+
+# Bedrock invoke access — scoped to Claude Haiku only (cost guard)
+resource "aws_iam_role_policy" "lambda_bedrock_policy" {
+  name = "${var.project_name}-api-lambda-bedrock-policy"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        Resource = [
+          "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
+        ]
+      }
+    ]
+  })
+}
+
+# S3 pre-signed URL generation (only the resumes bucket, user's own prefix)
+resource "aws_iam_role_policy" "lambda_s3_resumes_policy" {
+  name = "${var.project_name}-api-lambda-s3-resumes-policy"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:DeleteObject",
+          "s3:HeadObject",
+        ]
+        Resource = "${var.resumes_bucket_arn}/resumes/*"
       }
     ]
   })
@@ -150,6 +195,7 @@ resource "aws_lambda_function" "get_jobs" {
       JOBS_TABLE        = var.dynamodb_jobs_table_name
       USER_STATUS_TABLE = var.dynamodb_user_status_table_name
       USERS_TABLE       = var.dynamodb_users_table_name
+      JOB_SCORES_TABLE  = var.dynamodb_job_scores_table_name
       SITE_URL          = "https://${var.subdomain}.${var.domain_name}"
     }
   }
@@ -210,8 +256,10 @@ resource "aws_lambda_function" "get_user_settings" {
 
   environment {
     variables = {
-      USERS_TABLE = var.dynamodb_users_table_name
-      SITE_URL    = "https://${var.subdomain}.${var.domain_name}"
+      USERS_TABLE     = var.dynamodb_users_table_name
+      RESUMES_BUCKET  = var.resumes_bucket_name
+      AWS_ACCOUNT_ID  = data.aws_caller_identity.current.account_id
+      SITE_URL        = "https://${var.subdomain}.${var.domain_name}"
     }
   }
 
@@ -598,6 +646,154 @@ resource "aws_api_gateway_integration_response" "job_status_options" {
   ]
 }
 
+# POST /user/resume/upload-url  — returns pre-signed S3 PUT URL
+# DELETE /user/resume           — removes the resume from S3 + DynamoDB
+resource "aws_api_gateway_resource" "user_resume" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.user.id
+  path_part   = "resume"
+}
+
+resource "aws_api_gateway_resource" "user_resume_upload_url" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.user_resume.id
+  path_part   = "upload-url"
+}
+
+resource "aws_api_gateway_method" "post_resume_upload_url" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.user_resume_upload_url.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+  request_parameters = {
+    "method.request.header.Authorization" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "post_resume_upload_url" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.user_resume_upload_url.id
+  http_method             = aws_api_gateway_method.post_resume_upload_url.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_function.get_user_settings.invoke_arn
+}
+
+resource "aws_api_gateway_method" "delete_resume" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.user_resume.id
+  http_method   = "DELETE"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+  request_parameters = {
+    "method.request.header.Authorization" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "delete_resume" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.user_resume.id
+  http_method             = aws_api_gateway_method.delete_resume.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_function.get_user_settings.invoke_arn
+}
+
+# /user/resume OPTIONS
+resource "aws_api_gateway_method" "user_resume_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.user_resume.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "user_resume_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.user_resume.id
+  http_method = aws_api_gateway_method.user_resume_options.http_method
+  type        = "MOCK"
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "user_resume_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.user_resume.id
+  http_method = aws_api_gateway_method.user_resume_options.http_method
+  status_code = "200"
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+  depends_on = [aws_api_gateway_method.user_resume_options]
+}
+
+resource "aws_api_gateway_integration_response" "user_resume_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.user_resume.id
+  http_method = aws_api_gateway_method.user_resume_options.http_method
+  status_code = aws_api_gateway_method_response.user_resume_options.status_code
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = local.cors_headers
+    "method.response.header.Access-Control-Allow-Methods" = local.cors_methods
+    "method.response.header.Access-Control-Allow-Origin"  = local.cors_origin
+  }
+  depends_on = [
+    aws_api_gateway_integration.user_resume_options,
+    aws_api_gateway_method_response.user_resume_options,
+  ]
+}
+
+# /user/resume/upload-url OPTIONS
+resource "aws_api_gateway_method" "user_resume_upload_url_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.user_resume_upload_url.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "user_resume_upload_url_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.user_resume_upload_url.id
+  http_method = aws_api_gateway_method.user_resume_upload_url_options.http_method
+  type        = "MOCK"
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "user_resume_upload_url_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.user_resume_upload_url.id
+  http_method = aws_api_gateway_method.user_resume_upload_url_options.http_method
+  status_code = "200"
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+  depends_on = [aws_api_gateway_method.user_resume_upload_url_options]
+}
+
+resource "aws_api_gateway_integration_response" "user_resume_upload_url_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.user_resume_upload_url.id
+  http_method = aws_api_gateway_method.user_resume_upload_url_options.http_method
+  status_code = aws_api_gateway_method_response.user_resume_upload_url_options.status_code
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = local.cors_headers
+    "method.response.header.Access-Control-Allow-Methods" = local.cors_methods
+    "method.response.header.Access-Control-Allow-Origin"  = local.cors_origin
+  }
+  depends_on = [
+    aws_api_gateway_integration.user_resume_upload_url_options,
+    aws_api_gateway_method_response.user_resume_upload_url_options,
+  ]
+}
+
 # /user/settings OPTIONS
 resource "aws_api_gateway_method" "user_settings_options" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
@@ -661,10 +857,14 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_integration.patch_job_status.id,
       aws_api_gateway_integration.get_user_settings.id,
       aws_api_gateway_integration.put_user_settings.id,
+      aws_api_gateway_integration.post_resume_upload_url.id,
+      aws_api_gateway_integration.delete_resume.id,
       aws_api_gateway_integration.jobs_options.id,
       aws_api_gateway_integration.job_detail_options.id,
       aws_api_gateway_integration.job_status_options.id,
       aws_api_gateway_integration.user_settings_options.id,
+      aws_api_gateway_integration.user_resume_options.id,
+      aws_api_gateway_integration.user_resume_upload_url_options.id,
     ]))
   }
 
@@ -678,14 +878,20 @@ resource "aws_api_gateway_deployment" "main" {
     aws_api_gateway_integration.patch_job_status,
     aws_api_gateway_integration.get_user_settings,
     aws_api_gateway_integration.put_user_settings,
+    aws_api_gateway_integration.post_resume_upload_url,
+    aws_api_gateway_integration.delete_resume,
     aws_api_gateway_integration.jobs_options,
     aws_api_gateway_integration.job_detail_options,
     aws_api_gateway_integration.job_status_options,
     aws_api_gateway_integration.user_settings_options,
+    aws_api_gateway_integration.user_resume_options,
+    aws_api_gateway_integration.user_resume_upload_url_options,
     aws_api_gateway_integration_response.jobs_options,
     aws_api_gateway_integration_response.job_detail_options,
     aws_api_gateway_integration_response.job_status_options,
     aws_api_gateway_integration_response.user_settings_options,
+    aws_api_gateway_integration_response.user_resume_options,
+    aws_api_gateway_integration_response.user_resume_upload_url_options,
   ]
 }
 

@@ -28,6 +28,16 @@ output "dynamodb_users_table_arn" {
   value       = aws_dynamodb_table.users.arn
 }
 
+output "dynamodb_job_scores_table_name" {
+  description = "DynamoDB job scores table name"
+  value       = aws_dynamodb_table.job_scores.name
+}
+
+output "dynamodb_job_scores_table_arn" {
+  description = "DynamoDB job scores table ARN"
+  value       = aws_dynamodb_table.job_scores.arn
+}
+
 output "dynamodb_glassdoor_cache_table_name" {
   description = "DynamoDB Glassdoor cache table name"
   value       = aws_dynamodb_table.glassdoor_cache.name

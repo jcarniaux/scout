@@ -62,3 +62,23 @@ variable "shared_layer_arn" {
   description = "ARN of the shared Lambda Layer (db, models, response utils)"
   type        = string
 }
+
+variable "dynamodb_job_scores_table_name" {
+  description = "DynamoDB job scores table name"
+  type        = string
+}
+
+variable "dynamodb_job_scores_table_arn" {
+  description = "DynamoDB job scores table ARN"
+  type        = string
+}
+
+variable "resumes_bucket_name" {
+  description = "S3 bucket name for resume uploads"
+  type        = string
+}
+
+variable "resumes_bucket_arn" {
+  description = "S3 bucket ARN for resume uploads"
+  type        = string
+}

@@ -87,6 +87,20 @@ module "data" {
   job_retention_days = var.job_retention_days
 }
 
+# Scoring Module (S3 resumes bucket + resume-parser Lambda)
+module "scoring" {
+  source = "./modules/scoring"
+
+  project_name              = var.project_name
+  environment               = var.environment
+  aws_region                = var.aws_region
+  dynamodb_users_table_name = module.data.dynamodb_users_table_name
+  dynamodb_users_table_arn  = module.data.dynamodb_users_table_arn
+  shared_layer_arn          = aws_lambda_layer_version.shared.arn
+
+  depends_on = [module.data]
+}
+
 # API Gateway Module
 module "api" {
   source = "./modules/api"
@@ -101,13 +115,18 @@ module "api" {
   dynamodb_user_status_table_arn  = module.data.dynamodb_user_status_table_arn
   dynamodb_users_table_name       = module.data.dynamodb_users_table_name
   dynamodb_users_table_arn        = module.data.dynamodb_users_table_arn
+  dynamodb_job_scores_table_name  = module.data.dynamodb_job_scores_table_name
+  dynamodb_job_scores_table_arn   = module.data.dynamodb_job_scores_table_arn
+  resumes_bucket_name             = module.scoring.resumes_bucket_name
+  resumes_bucket_arn              = module.scoring.resumes_bucket_arn
   domain_name                     = var.domain_name
   subdomain                       = var.subdomain
   shared_layer_arn                = aws_lambda_layer_version.shared.arn
 
   depends_on = [
     module.auth,
-    module.data
+    module.data,
+    module.scoring,
   ]
 }
 
@@ -127,6 +146,8 @@ module "crawl" {
   dynamodb_glassdoor_cache_table_arn  = module.data.dynamodb_glassdoor_cache_table_arn
   dynamodb_users_table_name           = module.data.dynamodb_users_table_name
   dynamodb_users_table_arn            = module.data.dynamodb_users_table_arn
+  dynamodb_job_scores_table_name      = module.data.dynamodb_job_scores_table_name
+  dynamodb_job_scores_table_arn       = module.data.dynamodb_job_scores_table_arn
   shared_layer_arn                    = aws_lambda_layer_version.shared.arn
 
   depends_on = [module.data]

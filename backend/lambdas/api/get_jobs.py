@@ -59,6 +59,9 @@ def serialize_job(item: Dict[str, Any]) -> Dict[str, Any]:
     Map raw DynamoDB field names to the camelCase shape the frontend expects,
     and sanitize sentinel strings ("nan", "None") that JobSpy emits for missing
     values — leaving them as None so JSON renders null rather than a string.
+
+    Expects optional keys "match_score" and "match_reasoning" (integers/strings
+    pre-attached by the caller) which are forwarded as matchScore / matchReasoning.
     """
     def clean(value: Any) -> Optional[Any]:
         if value is None:
@@ -92,7 +95,42 @@ def serialize_job(item: Dict[str, Any]) -> Dict[str, Any]:
         "match401k":      clean(item.get("match_401k")),
         "applicationStatus": item.get("user_status", "NOT_APPLIED"),
         "notes":          clean(item.get("notes")),
+        # AI match score (None when no resume has been uploaded yet)
+        "matchScore":     item.get("match_score"),
+        "matchReasoning": clean(item.get("match_reasoning")),
     }
+
+
+def _load_user_scores(user_id: str, job_hashes: List[str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Batch-fetch AI match scores for a page of jobs in a single DynamoDB round-trip.
+
+    Args:
+        user_id:    "USER#{sub}"
+        job_hashes: List of raw job hash strings (without the "JOB#" prefix)
+
+    Returns:
+        Dict mapping job_hash → {"score": int, "reasoning": str}
+    """
+    job_scores_table = os.environ.get("JOB_SCORES_TABLE", "")
+    if not job_scores_table or not job_hashes:
+        return {}
+
+    try:
+        keys = [{"pk": user_id, "sk": f"JOB#{h}"} for h in job_hashes]
+        items = dynamodb.batch_get_items(job_scores_table, keys)
+        result: Dict[str, Dict[str, Any]] = {}
+        for item in items:
+            sk = item.get("sk", "")  # "JOB#{hash}"
+            h = sk[len("JOB#"):] if sk.startswith("JOB#") else sk
+            result[h] = {
+                "score": int(item["score"]) if item.get("score") is not None else None,
+                "reasoning": item.get("reasoning"),
+            }
+        return result
+    except Exception as exc:
+        logger.warning(f"Non-blocking: failed to load job scores for {user_id}: {exc}")
+        return {}
 
 
 def _load_user_statuses(user_id: str) -> Dict[str, str]:
@@ -173,6 +211,9 @@ def _sort_jobs(jobs: List[Dict[str, Any]], sort_by: str) -> List[Dict[str, Any]]
         jobs.sort(key=lambda x: x.get("salary_min", 0) or 0, reverse=True)
     elif sort_by == "rating":
         jobs.sort(key=lambda x: x.get("rating", 0) or 0, reverse=True)
+    elif sort_by == "match":
+        # Jobs with no score (None) sink to the bottom
+        jobs.sort(key=lambda x: x.get("match_score") if x.get("match_score") is not None else -1, reverse=True)
     else:
         # Default: sort by date (postedDate → created_at fallback)
         jobs.sort(key=lambda x: x.get("postedDate") or x.get("created_at", ""), reverse=True)
@@ -211,13 +252,17 @@ def get_single_job(
 
         job = dynamo_deserialize(items[0])
 
-        # Get user's status for this job
-        user_status_key = {
-            "pk": f"USER#{user_sub}",
-            "sk": f"JOB#{job_id}",
-        }
+        # Get user's application status for this job
+        user_id = f"USER#{user_sub}"
+        user_status_key = {"pk": user_id, "sk": f"JOB#{job_id}"}
         status_item = dynamodb.get_item(user_status_table, user_status_key)
         job["user_status"] = status_item.get("status", "NOT_APPLIED") if status_item else "NOT_APPLIED"
+
+        # Attach AI match score (best-effort — None if no resume or score yet)
+        scores = _load_user_scores(user_id, [job_id])
+        if job_id in scores:
+            job["match_score"] = scores[job_id]["score"]
+            job["match_reasoning"] = scores[job_id]["reasoning"]
 
         return success_response(serialize_job(job))
 
@@ -273,8 +318,8 @@ def list_jobs(
         # ── Windowed DynamoDB fetching ──
         # When no re-sorting is needed (default date sort uses the GSI's
         # native order), we can stop fetching as soon as we have enough
-        # filtered results. For salary/rating sorts, we need all items.
-        needs_full_fetch = sort_by in ("salary", "rating") or status_filter is not None
+        # filtered results. For salary/rating/match sorts, we need all items.
+        needs_full_fetch = sort_by in ("salary", "rating", "match") or status_filter is not None
         filtered_jobs: List[Dict[str, Any]] = []
         total_ddb_items = 0
         last_key = None
@@ -332,12 +377,39 @@ def list_jobs(
                 break
 
         # Sort (only needed for non-date sorts; date sort comes from GSI order)
-        if sort_by in ("salary", "rating"):
+        if sort_by in ("salary", "rating", "match"):
+            # For match sort, pre-fetch scores for ALL filtered jobs so we can sort
+            if sort_by == "match":
+                all_hashes = [
+                    (j.get("job_hash") or (j.get("pk", "")[len("JOB#"):]
+                     if j.get("pk", "").startswith("JOB#") else ""))
+                    for j in filtered_jobs
+                ]
+                all_scores = _load_user_scores(user_id, [h for h in all_hashes if h])
+                for job, h in zip(filtered_jobs, all_hashes):
+                    if h in all_scores:
+                        job["match_score"] = all_scores[h]["score"]
+                        job["match_reasoning"] = all_scores[h]["reasoning"]
             _sort_jobs(filtered_jobs, sort_by)
 
-        # Paginate and serialize to frontend camelCase shape
+        # Paginate
         total = len(filtered_jobs)
         page_slice = filtered_jobs[offset : offset + page_size]
+
+        # Attach match scores for this page (single batch call, unless already loaded)
+        if sort_by != "match":
+            page_hashes = [
+                job.get("job_hash") or (job.get("pk", "")[len("JOB#"):]
+                if job.get("pk", "").startswith("JOB#") else "")
+                for job in page_slice
+            ]
+            page_scores = _load_user_scores(user_id, [h for h in page_hashes if h])
+            for job, h in zip(page_slice, page_hashes):
+                if h in page_scores:
+                    job["match_score"] = page_scores[h]["score"]
+                    job["match_reasoning"] = page_scores[h]["reasoning"]
+
+        # Serialize to frontend camelCase shape
         paginated_jobs = [serialize_job(j) for j in page_slice]
 
         return success_response({

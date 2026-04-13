@@ -1,5 +1,5 @@
 import { fetchAuthSession } from 'aws-amplify/auth';
-import { Job, JobFilters, PaginatedResponse, UserSettings, SearchLocation, ApplicationStatus } from '@/types';
+import { Job, JobFilters, PaginatedResponse, UserSettings, SearchLocation, ApplicationStatus, ResumeStatus } from '@/types';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -68,6 +68,8 @@ export const api = {
         salaryMin: sp.salary_min ?? null,
         salaryMax: sp.salary_max ?? null,
       },
+      resumeStatus: (raw.resume_status ?? null) as ResumeStatus,
+      resumeFilename: raw.resume_filename ?? null,
     };
   },
 
@@ -106,6 +108,36 @@ export const api = {
         salaryMin: sp.salary_min ?? null,
         salaryMax: sp.salary_max ?? null,
       },
+      resumeStatus: settings.resumeStatus,
+      resumeFilename: settings.resumeFilename,
     };
+  },
+
+  /**
+   * Request a short-lived S3 pre-signed PUT URL for uploading a resume PDF.
+   * The upload itself is done directly from the browser to S3 (not through the API).
+   */
+  getResumeUploadUrl: async (): Promise<{ uploadUrl: string; s3Key: string; expiresIn: number }> => {
+    return authFetch('/user/resume/upload-url', { method: 'POST' });
+  },
+
+  /**
+   * Upload a PDF file directly to S3 using the pre-signed URL.
+   * Returns when the upload is complete.
+   */
+  uploadResumeTos3: async (uploadUrl: string, file: File): Promise<void> => {
+    const response = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/pdf' },
+      body: file,
+    });
+    if (!response.ok) {
+      throw new Error(`S3 upload failed: ${response.status}`);
+    }
+  },
+
+  /** Delete the user's resume from S3 and clear DynamoDB resume fields. */
+  deleteResume: async (): Promise<void> => {
+    await authFetch('/user/resume', { method: 'DELETE' });
   },
 };
