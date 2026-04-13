@@ -19,6 +19,7 @@ Scout is a serverless AWS platform that crawls five major job boards daily (Link
   - [API Handlers](#api-handlers-backendlambdasapi)
   - [Email Reports](#email-reports-backendlambdasreports)
   - [Build Script](#build-script-backendbuildsh)
+  - [Backend Tests](#backend-tests-backendlambdastests)
 - [Frontend — File-by-File Reference](#frontend--file-by-file-reference)
   - [Entry Points](#entry-points)
   - [Pages](#pages)
@@ -27,6 +28,7 @@ Scout is a serverless AWS platform that crawls five major job boards daily (Link
   - [Services](#services)
   - [Types](#types)
   - [Configuration](#configuration)
+  - [Frontend Tests](#frontend-tests)
 - [Infrastructure — Terraform Modules](#infrastructure--terraform-modules)
   - [Root Configuration](#root-configuration-terraform)
   - [Auth Module](#auth-module-terraformmodulesauth)
@@ -37,6 +39,7 @@ Scout is a serverless AWS platform that crawls five major job boards daily (Link
   - [Frontend Module](#frontend-module-terraformmodulesfrontend)
   - [Monitoring Module](#monitoring-module-terraformmodulesmonitoring)
 - [CI/CD Pipelines](#cicd-pipelines)
+- [Testing](#testing)
 - [Database Schema](#database-schema)
 - [API Contract](#api-contract)
 - [Deployment Guide](#deployment-guide)
@@ -59,13 +62,13 @@ Scout is a serverless AWS platform that crawls five major job boards daily (Link
 
 ## Project Goal
 
-Scout was built to solve a specific problem: monitoring five job boards daily for senior-level security and cloud architecture roles, without manually checking each site. It filters by a salary floor ($180k), deduplicates across sources, and lets users track their application pipeline — all from a single dashboard.
+Scout was built to solve a specific problem: monitoring five job boards daily for senior-level security and cloud architecture roles, without manually checking each site. It filters by a configurable salary floor (default $180k), deduplicates across sources, and lets users track their application pipeline — all from a single dashboard. Users configure their own search preferences (roles, locations, salary range) via Settings; crawlers merge preferences across all users at runtime.
 
 The project also serves as a hands-on AWS learning vehicle covering serverless compute, event-driven architecture, infrastructure-as-code, and CI/CD with GitHub Actions OIDC.
 
-**Target roles:** Security Engineer, Security Architect, Solutions Architect, Network Security Architect, Cloud Security Architect, Cloud Architect, CISO, Chief Information Security Officer, Deputy CISO, VP Information Security.
+**Default target roles:** Security Engineer, Security Architect, Solutions Architect, Network Security Architect, Cloud Security Architect, Cloud Architect, CISO, Chief Information Security Officer, Deputy CISO, VP Information Security.
 
-**Target locations:** Atlanta, GA (25-mile radius) and United States (remote only).
+**Default target locations:** Atlanta, GA (25-mile radius) and United States (remote only).
 
 ---
 
@@ -75,18 +78,18 @@ The project also serves as a hands-on AWS learning vehicle covering serverless c
  INTERNET
     |
  CloudFront + WAF (OWASP rules + 300 req/5min rate-limit)
-    +-- S3 --> React SPA (scout.carniaux.io)
+    +-- S3 --> React SPA (scout.carniaux.io, CSP headers)
     +-- API Gateway (REST, Cognito authorizer)
          +-- GET  /jobs                 Lambda: api-get-jobs
          +-- GET  /jobs/{id}            Lambda: api-get-jobs
          +-- PATCH /jobs/{id}/status    Lambda: api-update-status
          +-- GET|PUT /user/settings     Lambda: api-user-settings
                   |
-              DynamoDB
+              DynamoDB (deletion protection on 3 tables)
               +-- scout-jobs              (TTL 60d, DateIndex GSI, RatingIndex GSI)
               +-- scout-user-status       (StatusIndex GSI)
               +-- scout-users
-              +-- scout-glassdoor-cache   (TTL 7d)
+              +-- scout-glassdoor-cache   (TTL 7d, ephemeral — no deletion protection)
 
  EventBridge cron 02:00 EST daily
     +-- Step Functions (parallel state machine)
@@ -102,7 +105,7 @@ The project also serves as a hands-on AWS learning vehicle covering serverless c
  EventBridge cron 08:00 EST Sat    --> Lambda weekly-report  --> SES
 ```
 
-**Data flow:** Crawlers fetch rendered search result pages, parse job listings, apply salary filtering, and send qualifying jobs to SQS. The enrichment Lambda deduplicates by content hash, extracts benefits keywords, looks up Glassdoor ratings (cached 7 days), and writes to DynamoDB with a 60-day TTL. The API serves jobs from DynamoDB via a DateIndex GSI, and the React frontend displays them with filtering, sorting, and pagination.
+**Data flow:** Crawlers load search preferences from the users table (roles, locations, salary floor), fetch rendered search result pages, parse job listings, apply salary filtering, and send qualifying jobs to SQS. The enrichment Lambda deduplicates by content hash, extracts benefits keywords, looks up Glassdoor ratings (cached 7 days), and writes to DynamoDB with a 60-day TTL. The API serves jobs from DynamoDB via a DateIndex GSI, and the React frontend displays them with filtering, sorting, and pagination. Reports read user email addresses from DynamoDB — the Cognito registration email is stored there automatically on settings save.
 
 ---
 
@@ -113,19 +116,21 @@ The project also serves as a hands-on AWS learning vehicle covering serverless c
 | Frontend | React 18, TypeScript, Tailwind CSS 3.4, Vite, AWS Amplify (auth SDK) |
 | Authentication | Amazon Cognito (User Pool, TOTP MFA required, multi-user) |
 | API | Amazon API Gateway (REST) with Cognito authorizer |
-| Compute | AWS Lambda (Python 3.12), 13 functions total |
+| Compute | AWS Lambda (Python 3.12, shared dependency layer), 13 functions total |
 | Orchestration | AWS Step Functions (parallel state machine) |
 | Queue | Amazon SQS (raw jobs queue + dead-letter queue) |
-| Database | Amazon DynamoDB (on-demand, 4 tables, 3 GSIs) |
+| Database | Amazon DynamoDB (on-demand, 4 tables, 3 GSIs, deletion protection) |
 | Scraping | JobSpy (LinkedIn, Indeed), Oxylabs Web Scraper Realtime API (Glassdoor, ZipRecruiter, Dice) |
-| Email | Amazon SES (DKIM-signed, daily + weekly reports) |
-| CDN / Hosting | Amazon CloudFront + S3 (OAC, no public bucket) |
-| Security | AWS WAFv2 (OWASP rules + rate limiting), TLS 1.2+ |
+| Email | Amazon SES (DKIM-signed, daily + weekly reports to Cognito email) |
+| CDN / Hosting | Amazon CloudFront + S3 (OAC, no public bucket, CSP headers) |
+| Security | AWS WAFv2 (OWASP rules + rate limiting), TLS 1.2+, Content-Security-Policy |
 | DNS | Amazon Route 53 (scout.carniaux.io) |
-| Monitoring | Amazon CloudWatch (alarms, dashboard), Amazon SNS (alerts) |
+| Monitoring | Amazon CloudWatch (alarms, dashboard, EMF custom metrics), Amazon SNS (alerts) |
 | Secrets | AWS Secrets Manager (scraping credentials) |
 | IaC | Terraform 1.14+ (7 modules, S3 remote state) |
-| CI/CD | GitHub Actions (OIDC auth, no long-lived AWS keys) |
+| CI/CD | GitHub Actions (OIDC auth, no long-lived AWS keys, parallel test gates) |
+| Backend Testing | pytest + moto (AWS service mocking), ruff (linting) |
+| Frontend Testing | Vitest + React Testing Library + jsdom, ESLint |
 
 ---
 
@@ -140,11 +145,11 @@ scout/
 |   +-- outputs.tf                # 20+ outputs for CI/CD
 |   +-- modules/
 |       +-- auth/                 # Cognito User Pool, MFA, app client
-|       +-- data/                 # DynamoDB tables (4 tables, 3 GSIs)
-|       +-- api/                  # API Gateway + 3 Lambda handlers
+|       +-- data/                 # DynamoDB tables (4 tables, 3 GSIs, deletion protection)
+|       +-- api/                  # API Gateway + 3 Lambda handlers + shared layer
 |       +-- crawl/                # Step Functions, SQS, 7 Lambdas, EventBridge
 |       +-- email/                # SES, 2 report Lambdas, EventBridge schedules
-|       +-- frontend/             # S3, CloudFront, WAF, Route53 record
+|       +-- frontend/             # S3 (versioned), CloudFront, WAF, Route53 record
 |       +-- monitoring/           # SNS, CloudWatch alarms, dashboard
 |
 +-- backend/
@@ -162,18 +167,30 @@ scout/
 |   |   +-- api/
 |   |   |   +-- get_jobs.py       # GET /jobs and GET /jobs/{jobId}
 |   |   |   +-- update_status.py  # PATCH /jobs/{jobId}/status
-|   |   |   +-- user_settings.py  # GET/PUT /user/settings
+|   |   |   +-- user_settings.py  # GET/PUT /user/settings (Cognito email)
 |   |   +-- reports/
 |   |   |   +-- daily_report.py   # Daily email — new jobs summary
 |   |   |   +-- weekly_report.py  # Weekly email — pipeline + new jobs
 |   |   +-- shared/
-|   |       +-- models.py         # Data models, constants, serialization
-|   |       +-- db.py             # DynamoDB helper wrapper
-|   |       +-- crawler_utils.py  # Salary parsing, proxy config, normalization
-|   |       +-- oxylabs_client.py # Oxylabs Realtime API client
-|   |       +-- response.py       # API Gateway response builders
-|   |       +-- email_templates.py# HTML email template generators
-|   +-- requirements.txt          # Python dependencies
+|   |   |   +-- models.py         # Data models, constants, serialization
+|   |   |   +-- db.py             # DynamoDB helper wrapper
+|   |   |   +-- crawler_utils.py  # Salary parsing, proxy config, normalization
+|   |   |   +-- search_config.py  # Load merged user search preferences
+|   |   |   +-- oxylabs_client.py # Oxylabs Realtime API client
+|   |   |   +-- response.py       # API Gateway response builders
+|   |   |   +-- metrics.py        # CloudWatch Embedded Metric Format helper
+|   |   |   +-- email_templates.py# HTML email template generators
+|   |   +-- tests/
+|   |       +-- conftest.py       # Shared fixtures (moto mocks, API event builder)
+|   |       +-- test_models.py    # Models, constants, serialization tests
+|   |       +-- test_response.py  # API response builder tests
+|   |       +-- test_crawler_utils.py # Salary parsing, filtering tests
+|   |       +-- test_get_jobs.py  # GET /jobs handler integration tests
+|   |       +-- test_update_status.py # PATCH status handler tests
+|   |       +-- test_user_settings.py # GET/PUT settings + Cognito email tests
+|   |       +-- test_enrichment.py    # SQS enrichment pipeline tests
+|   +-- requirements.txt          # Python dependencies (pinned with ~=)
+|   +-- requirements-dev.txt      # Test dependencies (pytest, moto)
 |   +-- build.sh                  # Lambda packaging script
 |
 +-- frontend/
@@ -184,7 +201,7 @@ scout/
 |   |   +-- index.css             # Tailwind directives + dark mode overrides
 |   |   +-- pages/
 |   |   |   +-- Dashboard.tsx     # Main job listing page with filters
-|   |   |   +-- Settings.tsx      # User notification preferences
+|   |   |   +-- Settings.tsx      # Search prefs + notification settings
 |   |   +-- components/
 |   |   |   +-- Navbar.tsx        # Top nav, auth, theme toggle, mobile menu
 |   |   |   +-- FilterBar.tsx     # Date range, rating, status, search, sort
@@ -194,22 +211,31 @@ scout/
 |   |   |   +-- StatusBadge.tsx   # Color-coded status badge
 |   |   |   +-- RatingBadge.tsx   # Glassdoor rating with star icon
 |   |   |   +-- EmptyState.tsx    # Empty results placeholder
+|   |   |   +-- ErrorBoundary.tsx # Top-level React error boundary
 |   |   +-- hooks/
 |   |   |   +-- useJobs.ts        # React Query hooks (5 hooks)
 |   |   |   +-- useTheme.ts       # Dark/light theme with localStorage
 |   |   +-- services/
 |   |   |   +-- api.ts            # Authenticated API client (5 methods)
 |   |   +-- types/
-|   |       +-- index.ts          # TypeScript interfaces and type unions
+|   |   |   +-- index.ts          # TypeScript interfaces and type unions
+|   |   +-- test/
+|   |       +-- setup.ts          # Vitest setup (jest-dom matchers)
+|   +-- src/components/
+|   |   +-- StatusBadge.test.tsx   # StatusBadge unit tests
+|   |   +-- RatingBadge.test.tsx   # RatingBadge unit tests
+|   |   +-- EmptyState.test.tsx    # EmptyState unit tests
+|   |   +-- ErrorBoundary.test.tsx # ErrorBoundary unit tests
 |   +-- public/
 |   |   +-- favicon.svg           # Scout magnifying glass icon
+|   +-- index.html                # HTML shell with CSP meta tag
 |   +-- package.json
-|   +-- vite.config.ts
+|   +-- vite.config.ts            # Vite + Vitest configuration
 |   +-- tsconfig.json
 |   +-- .env.example
 |
 +-- .github/workflows/
-|   +-- deploy.yml                # Full CI/CD: Terraform + backend + frontend
+|   +-- deploy.yml                # Full CI/CD: tests + Terraform + deploy
 |   +-- deploy-frontend.yml       # Frontend-only: build + S3 sync + invalidation
 |
 +-- scripts/
@@ -232,9 +258,9 @@ Defines the core data structures, application constants, and DynamoDB serializat
 **Constants:**
 
 - `APPLICATION_STATUSES` — The seven valid application pipeline states: `NOT_APPLIED`, `NOT_INTERESTED`, `APPLIED`, `RECRUITER_INTERVIEW`, `TECHNICAL_INTERVIEW`, `OFFER_RECEIVED`, `OFFER_ACCEPTED`.
-- `ROLE_QUERIES` — The ten target job titles to search for: Security Engineer, Security Architect, Solutions Architect, Network Security Architect, Cloud Security Architect, Cloud Architect, CISO, Chief Information Security Officer, Deputy CISO, VP Information Security.
-- `LOCATIONS` — Two search locations: Atlanta GA (25-mile radius, on-site) and United States (remote only).
-- `SALARY_MINIMUM` — The minimum salary threshold: $180,000.
+- `ROLE_QUERIES` — The ten default job titles to search for: Security Engineer, Security Architect, Solutions Architect, Network Security Architect, Cloud Security Architect, Cloud Architect, CISO, Chief Information Security Officer, Deputy CISO, VP Information Security.
+- `LOCATIONS` — Two default search locations: Atlanta GA (25-mile radius, on-site) and United States (remote only).
+- `SALARY_MINIMUM` — The default minimum salary threshold: $180,000.
 
 **Dataclasses:**
 
@@ -259,7 +285,7 @@ A wrapper around the `boto3` DynamoDB Table resource that standardizes error han
 - `get_table(table_name)` — Returns a Table resource.
 - `get_item(table_name, key)` — Fetches a single item by primary key. Returns the item dict or `None`.
 - `put_item(table_name, item, condition_expression=None)` — Writes an item, optionally with a conditional expression (used for deduplication via `attribute_not_exists(pk)`).
-- `update_item(table_name, key, update_expression, expression_attribute_values, condition_expression=None)` — Updates an item and returns the new state (`ALL_NEW`).
+- `update_item(table_name, key, update_expression, expression_attribute_values, condition_expression=None, expression_attribute_names=None)` — Updates an item and returns the new state (`ALL_NEW`).
 - `query(table_name, key_condition_expression, expression_attribute_values, ...)` — Queries a table or GSI with support for index_name, limit, pagination (exclusive_start_key), and sort order. Returns `(items, last_evaluated_key)`.
 - `scan(table_name, filter_expression=None, ...)` — Full table scan with optional filtering. Returns `(items, last_evaluated_key)`.
 - `batch_write(table_name, items_to_put, items_to_delete=None)` — Batch writes up to 25 items per batch using the DynamoDB batch writer context manager.
@@ -281,7 +307,18 @@ Helper functions shared by all crawler Lambdas for secrets management, salary pa
 - `normalize_title(title)` — Applies title-case normalization.
 - `normalize_company(company)` — Trims whitespace.
 - `normalize_location(location)` — Applies title-case and trims whitespace.
-- `meets_salary_requirement(salary_min, minimum_threshold=180000)` — Returns `True` if the salary meets the threshold. Critically, returns `True` when salary is `None` — jobs without salary data are kept rather than discarded.
+- `meets_salary_requirement(salary_min, minimum_threshold=180000)` — Returns `True` if the salary meets the threshold. Returns `True` when salary is `None` — jobs without salary data are kept rather than discarded.
+
+---
+
+#### `search_config.py` — Dynamic Search Configuration
+
+Loads and merges search preferences from all users in the DynamoDB users table at crawler startup. Falls back to hardcoded defaults when no preferences are stored.
+
+**Functions:**
+
+- `load_search_config()` — Scans the users table, unions all role queries and locations (deduplicated by `(location, remote)` tuple), and takes the lowest salary minimum across all users. Returns `{role_queries, locations, salary_minimum}`.
+- `_defaults()` — Returns the hardcoded defaults from `models.py`.
 
 ---
 
@@ -298,8 +335,8 @@ A synchronous HTTP client for the Oxylabs Web Scraper Realtime API, used by the 
 **Class: `OxylabsClient`**
 
 - `__init__()` — Initializes the client by retrieving Oxylabs credentials from Secrets Manager.
-- `_extract_credentials(secrets)` — Static method that extracts the Oxylabs username and password from the secrets dict. Supports both explicit `oxylabs_username`/`oxylabs_password` keys and legacy proxy-string parsing (`user:pass@host:port`).
-- `fetch_page(url, render=True, geo_location="United States", timeout=105)` — Sends a request to Oxylabs Realtime API with `source: "universal"` and `render: "html"`. Retries on timeout, server errors (5xx), and Oxylabs target-site errors (6xx) using exponential backoff. Returns the fully rendered HTML string or `None` on failure.
+- `_extract_credentials(secrets)` — Static method that extracts the Oxylabs username and password from the secrets dict. Supports both explicit `oxylabs_username`/`oxylabs_password` keys and legacy proxy-string parsing.
+- `fetch_page(url, render=True, geo_location="United States", timeout=105)` — Sends a request to Oxylabs Realtime API with `source: "universal"` and `render: "html"`. Retries on timeout, server errors (5xx), and Oxylabs target-site errors (6xx) using exponential backoff. Returns the rendered HTML string or `None` on failure.
 
 ---
 
@@ -316,6 +353,19 @@ Standardized response constructors for API Gateway Lambda proxy integration.
 - `not_found_response(message="Not found")` — 404 response.
 - `unauthorized_response(message="Unauthorized")` — 401 response.
 - `forbidden_response(message="Forbidden")` — 403 response.
+
+---
+
+#### `metrics.py` — CloudWatch Embedded Metric Format Helper
+
+Emits structured log lines that CloudWatch automatically parses into custom metrics — no `put_metric_data` API calls, no extra latency, no extra cost.
+
+**Functions:**
+
+- `emit_metric(namespace, metric_name, value, unit="Count", **dimensions)` — Emits a single CloudWatch metric via EMF. Writes a JSON line to stdout with the `_aws` envelope containing namespace, dimensions, and metric definition. Dimensions are passed as keyword arguments (e.g. `source="linkedin"`).
+- `_now_millis()` — Returns the current UTC epoch in milliseconds.
+
+**Usage:** `emit_metric("Scout/Enrichment", "JobsStored", 42, source="linkedin")`
 
 ---
 
@@ -347,13 +397,15 @@ Scout uses two scraping strategies depending on each job board's anti-bot protec
 
 Oxylabs-based crawlers use a **two-phase resilient parser** pattern: Phase 1 tries specific CSS selectors for structured extraction; Phase 2 falls back to generic link-based extraction if Phase 1 fails. This guards against CSS selector rot — when a site redesigns, Phase 2 continues extracting jobs while the first card's HTML is dumped to CloudWatch for debugging.
 
+All crawlers call `load_search_config()` at startup to get the merged user search preferences (roles, locations, salary floor).
+
 ---
 
 #### `linkedin.py` — LinkedIn Crawler
 
 Uses JobSpy to crawl LinkedIn's guest job search API.
 
-**`handler(event, context)`** — Iterates over all role queries and locations. For each combination, calls `scrape_jobs()` with `site_name=["linkedin"]`, `results_wanted=50`, `hours_old=24`. For each result: extracts salary, checks the minimum requirement, deduplicates by URL within the run, and sends qualifying jobs to SQS. Returns `{statusCode, source, jobs_sent, errors}`.
+**`handler(event, context)`** — Loads search config, iterates over all role queries and locations. For each combination, calls `scrape_jobs()` with `site_name=["linkedin"]`, `results_wanted=50`, `hours_old=24`. For each result: extracts salary, checks the minimum requirement, deduplicates by URL within the run, and sends qualifying jobs to SQS. Returns `{statusCode, source, jobs_sent, errors}`.
 
 ---
 
@@ -374,7 +426,7 @@ Uses Oxylabs Web Scraper API to fetch fully rendered Glassdoor search pages, the
 - `_build_search_url(role, location, distance, is_remote)` — Constructs a Glassdoor search URL with keyword, location, remote filter, radius, and date sorting parameters.
 - `_parse_salary(text)` — Parses salary strings like "$180K - $220K". Converts "K" format to full amounts and validates against a 30k–1M range.
 - `_extract_text(element, selectors)` — Tries a list of CSS selectors against a BeautifulSoup element and returns the first non-empty text match.
-- `_parse_jobs_from_html(html)` — **Two-phase parser.** Phase 1 tries specific selectors: `li[data-test='jobListing']`, `li.react-job-listing`, `[data-brandviews*='JOB_CARD']`. Phase 2 falls back to finding all `a[href*='/job-listing/']` links and extracting title/company/location from the parent context. Dumps the first card's HTML to CloudWatch for debugging.
+- `_parse_jobs_from_html(html)` — **Two-phase parser.** Phase 1 tries specific selectors: `li[data-test='jobListing']`, `li.react-job-listing`, `[data-brandviews*='JOB_CARD']`. Phase 2 falls back to finding all `a[href*='/job-listing/']` links. Dumps the first card's HTML to CloudWatch for debugging.
 - `handler(event, context)` — Initializes OxylabsClient, iterates over roles/locations, fetches pages, parses jobs, deduplicates, and sends to SQS. Returns `{statusCode, source, jobs_sent, errors}`.
 
 ---
@@ -388,7 +440,7 @@ Uses Oxylabs Web Scraper API with the same two-phase parser pattern.
 - `_build_search_url(role, location, distance, is_remote)` — Constructs a ZipRecruiter search URL with search query, location, radius, remote flag, and `days=1` for recent postings.
 - `_parse_salary(text)` — Parses salary from "$180,000 - $220,000 a year" format. Detects hourly rates (value < 500) and converts to annual using 2,080 hours.
 - `_extract_text(element, selectors)` — CSS selector fallback chain.
-- `_parse_jobs_from_html(html)` — **Two-phase parser.** Phase 1 tries: `article.job_result`, `[data-testid='job-card']`, `[data-job-id]`. Phase 2 falls back to `a[href*='/jobs/']` links filtered to minimum 30-character length. Dumps first card HTML.
+- `_parse_jobs_from_html(html)` — **Two-phase parser.** Phase 1 tries: `article.job_result`, `[data-testid='job-card']`, `[data-job-id]`. Phase 2 falls back to `a[href*='/jobs/']` links filtered to minimum 30-character length.
 - `handler(event, context)` — Same orchestration pattern as Glassdoor.
 
 ---
@@ -403,7 +455,7 @@ Uses Oxylabs Web Scraper API. Dice is not supported by JobSpy.
 - `_parse_salary(text)` — Parses salary with hourly detection. Converts hourly (value < 500) to annual (2,080 factor), "K" format to full amounts.
 - `_extract_text_near(element, selectors)` — Tries CSS selectors against an element, returns first non-empty text.
 - `_find_closest_text(link, tag_names, max_depth=4)` — Walks up the DOM tree from a link element, searching siblings and parent children for text in specified tag names. Used in Phase 2 to find company/location near a job link.
-- `_parse_jobs_from_html(html)` — **Two-phase parser.** Phase 1 tries: `dhi-search-card`, `[data-cy='search-card']`, `.card.search-card`, and container children. Phase 2 falls back to `a[href*='/job-detail/']` links with context extraction. Dumps first card HTML.
+- `_parse_jobs_from_html(html)` — **Two-phase parser.** Phase 1 tries: `dhi-search-card`, `[data-cy='search-card']`, `.card.search-card`, and container children. Phase 2 falls back to `a[href*='/job-detail/']` links with context extraction.
 - `handler(event, context)` — Same orchestration pattern as Glassdoor.
 
 ---
@@ -414,16 +466,9 @@ A read-only diagnostic Lambda for testing all crawlers without writing to SQS. U
 
 **Functions:**
 
-- `_test_jobspy_source(site_name, jobspy_name, role, location_config)` — Tests a JobSpy-based source (Indeed). Reports: fetch duration, status, jobs found, jobs with salary, jobs meeting the salary filter, a sample job, and DataFrame columns.
-- `_test_oxylabs_source(source, role, location_config)` — Tests an Oxylabs-based source (Glassdoor, ZipRecruiter, Dice). Dynamically imports the correct crawler module. Reports: Oxylabs initialization status, test URL, fetch duration, HTML size, jobs found, parse status, salary analysis, and HTML diagnostics for empty results.
+- `_test_jobspy_source(site_name, jobspy_name, role, location_config)` — Tests a JobSpy-based source. Reports: fetch duration, status, jobs found, jobs with salary, jobs meeting the salary filter, a sample job, and DataFrame columns.
+- `_test_oxylabs_source(source, role, location_config)` — Tests an Oxylabs-based source. Reports: Oxylabs initialization status, test URL, fetch duration, HTML size, jobs found, parse status, salary analysis, and HTML diagnostics for empty results.
 - `handler(event, context)` — Accepts optional `{sources: ["dice"], role: "Cloud Architect"}` input. Defaults to all five sources and "Cloud Security Architect". Checks secrets availability, runs diagnostics for each source, and returns a detailed report. **Does not write to SQS.**
-
-**Invocation:**
-
-```bash
-aws lambda invoke --function-name scout-crawl-diagnose /tmp/out.json
-cat /tmp/out.json | python3 -m json.tool
-```
 
 ---
 
@@ -445,8 +490,8 @@ Processes raw job messages from SQS, deduplicates, enriches with benefits and ra
 
 - `compute_job_hash(title, company, location, job_url="")` — Generates a SHA256 hash for deduplication. When the company is missing or "Unknown" (common with LinkedIn), the job URL is used as the primary dedup key. Otherwise, uses `title|company|location`.
 - `extract_benefits(description)` — Regex-based extraction of benefits from job descriptions. Detects: PTO, Sick Days, 401(k), Medical, Dental, Vision, HSA, FSA, Tuition Reimbursement, Remote Work, Stock Options. Returns a sorted list.
-- `fetch_glassdoor_rating(company, cache_table)` — Fetches a Glassdoor company rating. Checks the DynamoDB cache first (7-day TTL). On cache miss, attempts a best-effort scrape of Glassdoor search results for a `companyRating` JSON field. Caches both successful ratings and failed lookups.
-- `handler(event, context)` — Processes each SQS record: parses JSON, validates required fields (title + job_url), normalizes company to "Unknown" if missing, computes the job hash, builds the DynamoDB item with `pk=JOB#{hash}`, `sk=SOURCE#{source}#{url_md5}`, `gsi1pk=JOB`, and `postedDate` (date-only ISO string, falling back to today). Extracts benefits, fetches the Glassdoor rating (best effort), and performs a conditional put (`attribute_not_exists(pk)`) to skip duplicates. Sets a 60-day TTL. Returns `{statusCode, processed, stored, duplicates, errors}`.
+- `fetch_glassdoor_rating(company, cache_table)` — Fetches a Glassdoor company rating. Checks the DynamoDB cache first (7-day TTL). On cache miss, attempts a best-effort scrape. Caches both successful ratings and failed lookups.
+- `handler(event, context)` — Processes each SQS record: parses JSON, validates required fields (title + job_url), normalizes company to "Unknown" if missing, computes the job hash, builds the DynamoDB item with `pk=JOB#{hash}`, `sk=SOURCE#{source}#{url_md5}`, `gsi1pk=JOB`, and `postedDate` (date-only ISO string). Extracts benefits, fetches the Glassdoor rating, and performs a conditional put (`attribute_not_exists(pk)`) to skip duplicates. Sets a 60-day TTL. Returns `{statusCode, processed, stored, duplicates, errors}`.
 
 ---
 
@@ -461,8 +506,8 @@ Handles `GET /jobs` (list with filtering) and `GET /jobs/{jobId}` (single job de
 - `get_user_sub(event)` — Extracts the Cognito user `sub` from the API Gateway authorizer claims.
 - `get_date_range_start(date_range)` — Converts a date range parameter ("24h", "7d", "30d") to a date-only ISO string (`YYYY-MM-DD`). Uses date-only format to match the enrichment Lambda's `postedDate` storage format.
 - `serialize_job(item)` — Maps DynamoDB field names to the camelCase shape the frontend expects. Strips the `JOB#` prefix from `pk` to get the bare job ID. Cleans sentinel strings ("nan", "None", "") to `null`.
-- `filter_jobs(jobs, user_id, min_rating, status_filter, sort_by)` — Fetches user application statuses from the user-status table, filters jobs by minimum Glassdoor rating and application status, attaches the user's status to each job, and sorts by date (default), salary, or rating.
-- `list_jobs(event, context)` — Parses query parameters (dateRange, minRating, status, sort, page, pageSize), queries the DateIndex GSI (`gsi1pk=JOB AND postedDate >= start`), deserializes, filters, paginates, and returns `{jobs, total, page, pageSize, hasMore}`.
+- `filter_jobs(jobs, user_id, min_rating, status_filter, sort_by)` — Fetches user application statuses from the user-status table, filters by minimum Glassdoor rating and application status, attaches the user's status to each job, and sorts by date (default), salary, or rating.
+- `list_jobs(event, context)` — Parses query parameters, queries the DateIndex GSI, deserializes, filters, paginates, and returns `{jobs, total, page, pageSize, hasMore}`.
 - `get_single_job(event, context)` — Queries by `pk=JOB#{jobId}`, fetches the user's application status, and returns the serialized job.
 - `handler(event, context)` — Routes to `get_single_job` or `list_jobs` based on the presence of a `jobId` path parameter.
 
@@ -472,20 +517,22 @@ Handles `GET /jobs` (list with filtering) and `GET /jobs/{jobId}` (single job de
 
 Handles `PATCH /jobs/{jobId}/status`.
 
-**`handler(event, context)`** — Extracts the user sub and job ID, validates the request body (`status` must be one of `APPLICATION_STATUSES`, optional `notes`), and writes to the user-status table with `pk=USER#{sub}`, `sk=JOB#{jobId}`. Returns the updated status record.
+**`handler(event, context)`** — Extracts the user sub and job ID, validates the request body (`status` must be one of `APPLICATION_STATUSES`, optional `notes` capped at 1000 characters), and writes to the user-status table with `pk=USER#{sub}`, `sk=JOB#{jobId}`. Returns the updated status record.
 
 ---
 
 #### `user_settings.py` — User Settings API
 
-Handles `GET /user/settings` and `PUT /user/settings`.
+Handles `GET /user/settings` and `PUT /user/settings`. Email address is sourced from the Cognito JWT claims (the registration email), not from user input.
 
 **Functions:**
 
-- `validate_email(email)` — Regex validation of email format.
-- `get_settings(event, context)` — Queries the users table by `pk=USER#{sub}`. Returns user preferences or defaults if not found.
-- `put_settings(event, context)` — Validates the email, writes settings to the users table with `created_at` (first write) and `updated_at`, and returns the updated settings.
-- `handler(event, context)` — Routes to `get_settings` or `put_settings` based on HTTP method.
+- `get_user_sub(event)` — Extracts the Cognito user `sub` from the authorizer claims.
+- `get_cognito_email(event)` — Extracts the verified email from the Cognito JWT `email` claim. Because the user pool uses `username_attributes = ["email"]`, this claim is always present in the ID token and is the authoritative address for reports.
+- `_serialize_search_prefs(item)` — Extracts search preferences (role_queries, locations, salary_min, salary_max) from a DynamoDB user item.
+- `get_settings(event, context)` — Queries the users table by `pk=USER#{sub}`. Returns user preferences with Cognito email, or defaults if not found.
+- `put_settings(event, context)` — Validates search preferences (role_queries: list, max 50; locations: list, max 50; salary_min/max: optional int). Builds a dynamic SET expression, always stores the Cognito email, uses `if_not_exists(created_at, :now)` to preserve first-write timestamp. Returns the updated settings.
+- `handler(event, context)` — Routes to `get_settings` or `put_settings` based on HTTP method. Returns 405 for unsupported methods.
 
 ---
 
@@ -495,7 +542,7 @@ Handles `GET /user/settings` and `PUT /user/settings`.
 
 Triggered by EventBridge at 07:00 EST daily.
 
-**`handler(event, context)`** — Queries the jobs table for items created in the last 24 hours via the DateIndex GSI. Scans the users table for users with `daily_report=True`. For each user with a verified email, generates a `daily_report_email` HTML template and sends it via SES. Returns `{statusCode, emails_sent, jobs_found}`.
+**`handler(event, context)`** — Queries the jobs table for items created in the last 24 hours via the DateIndex GSI. Scans the users table for users with `daily_report=True`. For each user with an email (stored from Cognito at settings save), generates a `daily_report_email` HTML template and sends it via SES. Returns `{statusCode, emails_sent, jobs_found}`.
 
 ---
 
@@ -503,7 +550,7 @@ Triggered by EventBridge at 07:00 EST daily.
 
 Triggered by EventBridge at 08:00 EST every Saturday.
 
-**`handler(event, context)`** — Finds users with `weekly_report=True`. For each user: queries the user-status table for all their application statuses, groups jobs by status (NOT_APPLIED, APPLIED, RECRUITER_INTERVIEW, etc.), fetches job details for each group, queries new jobs from the last 7 days, generates a `weekly_report_email` HTML template, and sends via SES. Returns `{statusCode, emails_sent}`.
+**`handler(event, context)`** — Finds users with `weekly_report=True`. For each user: queries the user-status table for all their application statuses, groups jobs by status, fetches job details for each group, queries new jobs from the last 7 days, generates a `weekly_report_email` HTML template, and sends via SES. Returns `{statusCode, emails_sent}`.
 
 ---
 
@@ -520,19 +567,62 @@ Packages Lambda functions and dependencies into deployment zip files.
 
 ---
 
+### Backend Tests (`backend/lambdas/tests/`)
+
+All backend tests use **pytest** with **moto** to mock AWS services (DynamoDB, SQS, SES, Secrets Manager). No real AWS calls are made during testing.
+
+#### `conftest.py` — Shared Fixtures
+
+- `_set_env` (autouse) — Injects Lambda environment variables (table names, URLs, region) via `monkeypatch.setenv`.
+- `dynamodb_resource` — Yields a moto-mocked DynamoDB resource.
+- `jobs_table` — Creates a mock `scout-jobs` table with DateIndex GSI, matching the production schema.
+- `user_status_table` — Creates a mock `scout-user-status` table with StatusIndex GSI.
+- `users_table` — Creates a mock `scout-users` table.
+- `make_api_event(method, path, body, path_params, query_params, user_sub, user_email)` — Builds a minimal API Gateway proxy event with Cognito authorizer claims (including `sub` and `email`).
+
+#### `test_models.py` — 8 tests
+
+Tests `dynamo_deserialize` (Decimal-to-int/float, set-to-list, nested dict, None passthrough), `dynamo_serialize` (float-to-Decimal, list-to-set, None omission, nested dict), and `APPLICATION_STATUSES` constant integrity.
+
+#### `test_response.py` — Response builder tests
+
+Tests `success_response`, `error_response`, `not_found_response`, `unauthorized_response`, `forbidden_response`, and CORS header generation.
+
+#### `test_crawler_utils.py` — Salary parsing and filtering tests
+
+Tests `extract_salary_min`, `extract_salary_max`, `meets_salary_requirement`, `normalize_title`, `normalize_company`, `normalize_location`.
+
+#### `test_get_jobs.py` — 16 tests
+
+Tests single job retrieval, 404, user status attachment, paginated listing, source/status filtering, salary sorting, `serialize_job` helper, and `get_date_range_start` calculation.
+
+#### `test_update_status.py` — 18 tests
+
+Tests happy path for all 7 valid statuses, validation errors (missing status, invalid status, notes exceeding 1000 chars, oversized job ID), auth (missing sub returns 401), and missing environment variables.
+
+#### `test_user_settings.py` — 16 tests
+
+Tests organized in 4 classes: `TestGetSettings` (defaults for new user, Cognito email override over stored, missing auth returns 401), `TestPutSettings` (create new, stores Cognito email in DynamoDB, update existing, created_at preserved, validation for role_queries/locations/invalid JSON), `TestSettingsDispatcher` (unsupported method returns 405), `TestCognitoEmailExtraction` (extracts email from claims, returns None when missing).
+
+#### `test_enrichment.py` — 26 tests
+
+Tests job storage, benefits extraction (individual keywords + combined), batch processing, deduplication via conditional put, timestamp refresh for existing jobs, location filtering, missing fields handling, edge cases (Unknown company dedup by URL, "nan" date fallback, malformed JSON in SQS), `compute_job_hash` function, and benefits regex patterns.
+
+---
+
 ## Frontend — File-by-File Reference
 
 ### Entry Points
 
 #### `src/main.tsx` — Application Entry Point
 
-Imports React, ReactDOM, and the QueryClient provider. Configures React Query with a 5-minute stale time and 10-minute garbage collection time. Mounts the `App` component to the `#root` div, wrapped in `React.StrictMode` and `QueryClientProvider`.
+Imports React, ReactDOM, and the QueryClient provider. Configures React Query with a 5-minute stale time and 10-minute garbage collection time. Wraps `App` in `React.StrictMode`, `QueryClientProvider`, and `ErrorBoundary`. Mounts to the `#root` div.
 
 ---
 
 #### `src/App.tsx` — Root Component
 
-Configures AWS Amplify with Cognito credentials from `amplifyconfiguration.ts`. Wraps the app in Amplify's `<Authenticator>` component which gates all access behind login. Inside the auth guard, sets up `<BrowserRouter>` with two routes: `/` (Dashboard) and `/settings` (Settings). Renders the `<Navbar>` above all routes. Supports dark mode via Tailwind's `dark:` prefix on the root background.
+Configures AWS Amplify with Cognito credentials from `amplifyconfiguration.ts`. Wraps the app in Amplify's `<Authenticator>` component which gates all access behind login. Inside the auth guard, sets up `<BrowserRouter>` with two routes: `/` (Dashboard) and `/settings` (Settings). Renders the `<Navbar>` above all routes. Supports dark mode via Tailwind's `dark:` prefix.
 
 ---
 
@@ -540,39 +630,45 @@ Configures AWS Amplify with Cognito credentials from `amplifyconfiguration.ts`. 
 
 #### `src/pages/Dashboard.tsx` — Main Job Listing Page
 
-The primary page. Reads filter state from URL search params (making filters bookmark-shareable). Calls the `useJobs` hook with the current filters, page number, and page size. Renders a header with job count, last-updated timestamp, and refresh button; the `FilterBar` component; and the `JobList` component. Resets to page 1 on any filter change.
+Reads filter state from URL search params (making filters bookmark-shareable). Calls the `useJobs` hook with the current filters, page number, and page size. Renders a header with job count, last-updated timestamp, and refresh button; the `FilterBar` component; and the `JobList` component. Resets to page 1 on any filter change.
 
 ---
 
 #### `src/pages/Settings.tsx` — User Preferences Page
 
-Displays the user's email (read-only from Cognito) and two toggles for daily and weekly email reports. Uses `useSettings` to fetch current preferences and `useUpdateSettings` to persist changes. Shows a 3-second success toast on save.
+Three sections: **Search Preferences** (role queries as chip tags with add/remove, locations with distance radius and remote toggle, salary range min/max), **Email Notifications** (displays the Cognito account email as read-only, daily and weekly report toggles), and a save button with success/error feedback. Uses `useSettings` to fetch and `useUpdateSettings` to persist. The user's email is always the Cognito registration email — it cannot be changed from this page.
 
 ---
 
 ### Components
 
+#### `src/components/ErrorBoundary.tsx` — Error Boundary
+
+A React class component that catches unhandled render errors and shows a recovery UI ("Something went wrong" with a Reload button) instead of a blank screen. Logs the error and component stack to the console via `componentDidCatch`.
+
+---
+
 #### `src/components/Navbar.tsx` — Navigation Bar
 
-Top navigation with responsive mobile menu. Desktop view shows logo/home link, Dashboard and Settings navigation links, user email, dark/light theme toggle (Sun/Moon icons from lucide-react), and Sign Out button. Mobile view collapses to a hamburger menu. Uses `useTheme()` for theme management and Amplify's `useAuthenticator()` for sign-out and `fetchUserAttributes()` for email display.
+Top navigation with responsive mobile menu. Desktop view shows logo/home link, Dashboard and Settings navigation links, user email, dark/light theme toggle (Sun/Moon icons from lucide-react), and Sign Out button. Mobile view collapses to a hamburger menu. Uses `useTheme()` for theme management and Amplify's `useAuthenticator()` for sign-out.
 
 ---
 
 #### `src/components/FilterBar.tsx` — Filter Controls
 
-Provides filtering controls: date range buttons (24h, 7d, 30d), minimum Glassdoor rating slider (1–5, 0.5 step), application status dropdown (all 7 statuses), text search input (searches role, company, location), sort dropdown (Most Recent, Highest Salary, Best Rated), and a clear-all button showing the active filter count. All changes call `onFiltersChange` to update the parent's URL state.
+Provides filtering controls: date range buttons (24h, 7d, 30d), minimum Glassdoor rating slider (1–5, 0.5 step), application status dropdown (all 7 statuses), text search input (searches role, company, location), sort dropdown (Most Recent, Highest Salary, Best Rated), and a clear-all button showing the active filter count.
 
 ---
 
 #### `src/components/JobList.tsx` — Paginated Job List
 
-Renders three states: loading (3 animated skeleton cards), error (red error box with retry button), or data (grid of `JobCard` components with pagination). Pagination footer shows items-per-page selector (10, 20, 50), current/total page display, previous/next buttons, and total count. Includes an `EmptyState` component when the filtered result is empty.
+Renders three states: loading (3 animated skeleton cards), error (red error box with retry button), or data (grid of `JobCard` components with pagination). Pagination footer shows items-per-page selector (10, 20, 50), current/total page display, and previous/next buttons.
 
 ---
 
 #### `src/components/JobCard.tsx` — Job Listing Card
 
-Displays a single job with: role name and application status dropdown in the header; company name, Glassdoor rating badge, source badge (color-coded by source), location, posted date (relative — "2 days ago"), salary range, and "View Posting" external link in the meta row; benefits pills (PTO, 401k, Medical, Remote Work, etc.) when present; and truncated notes. Calls `useUpdateStatus` when the status dropdown changes.
+Displays a single job with: role name and application status dropdown in the header; company name, Glassdoor rating badge, source badge (color-coded), location, posted date (relative — "2 days ago"), salary range, and "View Posting" external link in the meta row; benefits pills when present; and truncated notes. Calls `useUpdateStatus` when the status dropdown changes.
 
 ---
 
@@ -630,11 +726,11 @@ Provides an `api` object with five methods that handle Cognito authentication tr
 
 **Methods:**
 
-- `api.getJobs(filters, page, pageSize)` — `GET /jobs` with query parameters: dateRange, minRating, status, search, sort, page, pageSize. Maps the response to `PaginatedResponse<Job>`.
-- `api.getJob(jobId)` — `GET /jobs/{jobId}`. Returns a single `Job`.
-- `api.updateStatus(jobId, status, notes?)` — `PATCH /jobs/{jobId}/status`. Sends `{status, notes}` in the body.
-- `api.getSettings()` — `GET /user/settings`. Returns `UserSettings`.
-- `api.updateSettings(settings)` — `PUT /user/settings`. Sends the settings object. Returns the updated `UserSettings`.
+- `api.getJobs(filters, page, pageSize)` — `GET /jobs` with query parameters.
+- `api.getJob(jobId)` — `GET /jobs/{jobId}`.
+- `api.updateStatus(jobId, status, notes?)` — `PATCH /jobs/{jobId}/status`.
+- `api.getSettings()` — `GET /user/settings`.
+- `api.updateSettings(settings)` — `PUT /user/settings`.
 
 ---
 
@@ -642,12 +738,15 @@ Provides an `api` object with five methods that handle Cognito authentication tr
 
 #### `src/types/index.ts` — TypeScript Definitions
 
-- `Job` — 20 fields: jobId, roleName, company, location, salaryMin/Max, ptoDays, sickDays, match401k, benefits, postedDate, sourceUrl, source (union: linkedin | indeed | glassdoor | ziprecruiter | dice), glassdoorRating, glassdoorUrl, createdAt, applicationStatus, notes.
-- `ApplicationStatus` — Union type with 7 values: NOT_APPLIED, NOT_INTERESTED, APPLIED, RECRUITER_INTERVIEW, TECHNICAL_INTERVIEW, OFFER_RECEIVED, OFFER_ACCEPTED.
-- `DateRange` — Union type: '24h' | '7d' | '30d'.
-- `JobFilters` — Object with optional fields: dateRange, minRating, status, search, sort.
-- `UserSettings` — Object: email, dailyReport (boolean), weeklyReport (boolean).
-- `PaginatedResponse<T>` — Generic: items (T[]), totalCount, page, pageSize, hasMore.
+- `Job` — 20 fields: jobId, roleName, company, location, salaryMin/Max, ptoDays, sickDays, match401k, benefits, postedDate, sourceUrl, source, glassdoorRating, glassdoorUrl, createdAt, description, jobType, applicationStatus, notes.
+- `ApplicationStatus` — Union type: `NOT_APPLIED` | `NOT_INTERESTED` | `APPLIED` | `RECRUITER_INTERVIEW` | `TECHNICAL_INTERVIEW` | `OFFER_RECEIVED` | `OFFER_ACCEPTED`.
+- `DateRange` — Union type: `24h` | `7d` | `30d`.
+- `JobSource` — Union type: `linkedin` | `indeed` | `dice` | `glassdoor` | `ziprecruiter`.
+- `JobFilters` — Object with optional fields: dateRange, status, search, sort, sources.
+- `SearchLocation` — Object: location (string), distance (number | null), remote (boolean).
+- `SearchPreferences` — Object: roleQueries, locations, salaryMin, salaryMax.
+- `UserSettings` — Object: email, dailyReport, weeklyReport, searchPreferences.
+- `PaginatedResponse<T>` — Generic: items, totalCount, page, pageSize, hasMore.
 
 ---
 
@@ -661,6 +760,10 @@ Exports the Amplify configuration object pointing to the Cognito User Pool. Read
 
 Imports Tailwind CSS directives (base, components, utilities). Overrides Amplify UI form styling for dark mode. Adds a global `transition-colors` (200ms) and custom pulse animation for loading skeletons.
 
+#### `index.html` — HTML Shell
+
+Includes a `Content-Security-Policy` meta tag restricting script sources to `'self'`, style sources to `'self' 'unsafe-inline'`, connections to `'self'` plus `*.amazonaws.com`, and setting `frame-ancestors 'none'` and `base-uri 'self'`. Also sets `referrer` to `strict-origin-when-cross-origin`.
+
 #### `.env.example` — Environment Variable Template
 
 ```
@@ -668,6 +771,28 @@ VITE_USER_POOL_ID=us-east-1_XXXXXXXXX
 VITE_USER_POOL_CLIENT_ID=XXXXXXXXX
 VITE_API_URL=https://XXXXXXXXX.execute-api.us-east-1.amazonaws.com/v1
 ```
+
+---
+
+### Frontend Tests
+
+Tests use **Vitest** (configured in `vite.config.ts`), **React Testing Library**, and **jsdom**. Setup file `src/test/setup.ts` imports `@testing-library/jest-dom/vitest` for DOM assertion matchers.
+
+#### `src/components/StatusBadge.test.tsx` — 4 tests
+
+Tests that all 7 status labels render correctly, undefined status renders null, and correct color classes are applied for APPLIED (blue) and OFFER_ACCEPTED (green).
+
+#### `src/components/RatingBadge.test.tsx` — 9 tests
+
+Tests rating display, "N/A" for null/undefined, Glassdoor link presence/absence, and color tiers (green for 4.0+, yellow for 3.0–4.0, red for below 3.0).
+
+#### `src/components/EmptyState.test.tsx` — 5 tests
+
+Tests default props rendering, custom title/description, action button render and click callback, and no button when no action provided.
+
+#### `src/components/ErrorBoundary.test.tsx` — 3 tests
+
+Tests that children render normally, errors are caught and recovery UI is shown, and children are hidden after an error.
 
 ---
 
@@ -723,13 +848,15 @@ Provisions Amazon Cognito for user authentication.
 
 Provisions four DynamoDB tables, all PAY_PER_REQUEST with point-in-time recovery.
 
+**Deletion protection** is enabled on three production tables (`scout-jobs`, `scout-user-status`, `scout-users`). The `scout-glassdoor-cache` table is ephemeral and does not have deletion protection — it can be safely rebuilt from live Glassdoor data.
+
 See [Database Schema](#database-schema) below for details.
 
 ---
 
 ### API Module (`terraform/modules/api/`)
 
-Provisions the REST API Gateway and three API Lambda functions.
+Provisions the REST API Gateway, three API Lambda functions, and a shared Lambda dependency layer.
 
 **Resources:**
 
@@ -737,8 +864,10 @@ Provisions the REST API Gateway and three API Lambda functions.
 - Cognito authorizer linked to the User Pool.
 - API routes with CORS: `GET /jobs`, `GET /jobs/{jobId}`, `PATCH /jobs/{jobId}/status`, `GET|PUT /user/settings`, `OPTIONS` preflight on all.
 - Three Lambda functions: `scout-api-get-jobs` (30s, 256MB), `scout-api-update-status` (30s, 256MB), `scout-api-user-settings` (30s, 256MB).
+- Lambda dependency layer — shared Python packages (boto3, pydantic, etc.) uploaded to S3 and published as a Lambda layer version.
 - IAM role with DynamoDB access (GetItem, Query, Scan, PutItem, UpdateItem, DeleteItem) on all three user-facing tables.
 - Stage `v1` with access logging (requestId, IP, latency, error).
+- CloudWatch log groups with 14-day retention.
 
 ---
 
@@ -755,7 +884,8 @@ Provisions the crawl pipeline: Step Functions, SQS, Lambda crawlers, enrichment,
 - Seven Lambda functions: 5 crawlers + diagnose (all 900s timeout, 512MB) + enrichment (300s, 512MB, SQS trigger with batch size 10, 5s batching window, partial failure reporting).
 - `aws_lambda_function.purge` — 60s timeout, 256MB.
 - EventBridge rule triggering the state machine daily at 02:00 EST.
-- Four IAM roles: crawler (SQS send + Secrets Manager), enrichment (SQS receive/delete + DynamoDB put/update/get + Secrets Manager), purge (DynamoDB scan/delete), Step Functions (Lambda invoke), EventBridge (StartExecution).
+- CloudWatch log groups with 14-day retention.
+- Four IAM roles: crawler (SQS send + Secrets Manager + DynamoDB read for search config), enrichment (SQS receive/delete + DynamoDB put/update/get + Secrets Manager), purge (DynamoDB scan/delete), Step Functions (Lambda invoke), EventBridge (StartExecution).
 
 ---
 
@@ -771,6 +901,7 @@ Provisions SES email sending and report Lambda functions.
 - Two Lambda functions: `scout-daily-report` and `scout-weekly-report` (both 60s, 256MB).
 - IAM role with DynamoDB read access (Query, Scan, GetItem on 3 tables + GSIs) and SES SendEmail.
 - Two EventBridge rules: daily at 07:00 EST, Saturday at 08:00 EST.
+- CloudWatch log groups with 14-day retention.
 
 ---
 
@@ -780,7 +911,7 @@ Provisions the static hosting infrastructure.
 
 **Resources:**
 
-- `aws_s3_bucket.frontend` — Frontend assets bucket (prevent_destroy lifecycle). Public access fully blocked.
+- `aws_s3_bucket.frontend` — Frontend assets bucket (prevent_destroy lifecycle, versioning enabled with 30-day noncurrent version lifecycle rule). Public access fully blocked.
 - `aws_s3_bucket_policy` — CloudFront OAC access only.
 - `aws_cloudfront_origin_access_control.main` — OAC with SigV4.
 - `aws_cloudfront_distribution.main` — Default root object `index.html`, custom error responses (403/404 return index.html for SPA routing), redirect HTTP to HTTPS, TLSv1.2_2021, gzip compression, CachingOptimized policy. Attached to WAFv2 ACL.
@@ -809,14 +940,22 @@ Provisions observability and alerting.
 
 ### `deploy.yml` — Full Deployment Pipeline
 
-Triggers on push to `main` when `terraform/**`, `backend/**`, or `frontend/**` change, or via manual `workflow_dispatch` (plan/apply/destroy).
+Triggers on push to `main` when `terraform/**`, `backend/**`, or `frontend/**` change, or via manual `workflow_dispatch` (plan/apply/destroy). Concurrency group ensures only one deploy runs at a time (queued, not cancelled).
 
 **Jobs (executed in DAG order):**
 
+```
+  terraform  ─────┬──┐
+  frontend-test ──┘  ├──▶ frontend-deploy
+                     │
+  backend-test  ─────┴──▶ backend-deploy
+```
+
 1. **terraform** — Runs `init`, `fmt -check`, `validate`, `plan`, and conditionally `apply`. Exports outputs (Cognito IDs, API URL, S3 bucket, CloudFront ID) for downstream jobs.
-2. **backend-test** (parallel with terraform) — Installs Python dependencies, runs `ruff check` linting, and validates syntax compilation for all `.py` files.
-3. **frontend-deploy** (depends on terraform) — Installs Node dependencies, builds the React app with Vite (injecting Cognito and API env vars), syncs to S3 (hashed assets get 1-year cache, index.html gets no-cache), and invalidates CloudFront.
-4. **backend-deploy** (depends on terraform + backend-test) — Runs `build.sh`, uploads the dependency layer to S3, publishes a new Lambda layer version, and deploys all 13 Lambda functions (5 crawlers + diagnose + enrichment + 3 API + 2 reports + purge).
+2. **backend-test** (parallel with terraform) — Installs Python dependencies from `requirements.txt` + `requirements-dev.txt`, runs `ruff check` linting, validates syntax compilation for all `.py` files, and runs `pytest` unit tests with moto mocking.
+3. **frontend-test** (parallel with terraform) — Installs Node dependencies, runs ESLint, and runs Vitest unit tests.
+4. **frontend-deploy** (depends on terraform + frontend-test) — Builds the React app with Vite (injecting Cognito and API env vars), syncs to S3 (hashed assets get 1-year cache, index.html gets no-cache), and invalidates CloudFront.
+5. **backend-deploy** (depends on terraform + backend-test) — Runs `build.sh`, uploads the dependency layer to S3, publishes a new Lambda layer version, and deploys all 13 Lambda functions.
 
 **Authentication:** GitHub Actions OIDC — no long-lived AWS access keys stored as secrets.
 
@@ -828,9 +967,50 @@ Triggers on push to `main` when only `frontend/**` changes, or via manual dispat
 
 ---
 
+## Testing
+
+### Backend (pytest + moto)
+
+**Setup:** `pip install -r backend/requirements-dev.txt` (includes pytest ~8.3.5 and moto ~5.1.5 with DynamoDB, SQS, SES, and Secrets Manager mocking).
+
+**Run:** `cd backend/lambdas && PYTHONPATH=. python -m pytest tests/ -v --tb=short`
+
+**Test files (8 files, 90+ tests):**
+
+| File | Tests | What it covers |
+|------|-------|---------------|
+| `test_models.py` | 8 | Serialization, deserialization, constants |
+| `test_response.py` | ~6 | API response builders, CORS headers |
+| `test_crawler_utils.py` | ~8 | Salary parsing, filtering, normalization |
+| `test_get_jobs.py` | 16 | Job listing, detail, filtering, pagination, serialization |
+| `test_update_status.py` | 18 | All 7 statuses, validation, auth, env vars |
+| `test_user_settings.py` | 16 | GET/PUT settings, Cognito email, search prefs validation |
+| `test_enrichment.py` | 26 | Dedup, benefits, batch, edge cases, hash function |
+
+**Linting:** `ruff check lambdas/`
+
+### Frontend (Vitest + React Testing Library)
+
+**Setup:** `cd frontend && npm ci`
+
+**Run:** `npm run test` (or `npm run test:watch` for development)
+
+**Test files (4 files, 21 tests):**
+
+| File | Tests | What it covers |
+|------|-------|---------------|
+| `StatusBadge.test.tsx` | 4 | Status labels, null handling, color classes |
+| `RatingBadge.test.tsx` | 9 | Rating display, N/A, links, color tiers |
+| `EmptyState.test.tsx` | 5 | Props, action button, click callback |
+| `ErrorBoundary.test.tsx` | 3 | Children render, error catch, recovery UI |
+
+**Linting:** `npm run lint`
+
+---
+
 ## Database Schema
 
-### `scout-jobs` — Job Listings
+### `scout-jobs` — Job Listings (deletion protection enabled)
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
@@ -855,18 +1035,18 @@ Triggers on push to `main` when only `frontend/**` changes, or via manual dispat
 | `crawled_at` | String | ISO timestamp of the crawl run |
 | `ttl` | Number | Epoch timestamp — auto-deletes after 60 days |
 
-**GSIs:** DateIndex (`gsi1pk` + `postedDate`, descending), RatingIndex (`gsi1pk` + `glassdoorRating`).
+**GSIs:** DateIndex (`gsi1pk` + `postedDate`), RatingIndex (`gsi1pk` + `glassdoorRating`).
 
 ---
 
-### `scout-user-status` — Application Tracking
+### `scout-user-status` — Application Tracking (deletion protection enabled)
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `pk` | String (partition key) | `USER#{cognito_sub}` |
 | `sk` | String (sort key) | `JOB#{job_hash}` |
 | `status` | String | One of 7 application statuses |
-| `notes` | String | User's notes (nullable) |
+| `notes` | String | User's notes (nullable, max 1000 chars) |
 | `created_at` | String | ISO timestamp |
 | `updated_at` | String | ISO timestamp |
 
@@ -874,20 +1054,25 @@ Triggers on push to `main` when only `frontend/**` changes, or via manual dispat
 
 ---
 
-### `scout-users` — User Preferences
+### `scout-users` — User Preferences (deletion protection enabled)
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `pk` | String (partition key) | `USER#{cognito_sub}` |
-| `email` | String | User's email |
+| `user_id` | String | Same as pk |
+| `email` | String | Cognito registration email (written automatically on settings save) |
 | `daily_report` | Boolean | Daily email opt-in |
 | `weekly_report` | Boolean | Weekly email opt-in |
-| `created_at` | String | ISO timestamp |
+| `role_queries` | List/Set | User's target job roles |
+| `search_locations` | List | User's target locations with distance/remote flags |
+| `salary_min` | Number | Minimum salary preference (nullable) |
+| `salary_max` | Number | Maximum salary preference (nullable) |
+| `created_at` | String | ISO timestamp (set once, preserved on update) |
 | `updated_at` | String | ISO timestamp |
 
 ---
 
-### `scout-glassdoor-cache` — Rating Cache
+### `scout-glassdoor-cache` — Rating Cache (no deletion protection — ephemeral)
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
@@ -960,17 +1145,25 @@ Returns a single job with full details and the user's application status.
 
 ### `GET /user/settings`
 
-Returns user notification preferences: `{email, dailyReport, weeklyReport}`.
+Returns user preferences including Cognito email (read-only), report toggles, and search preferences: `{email, dailyReport, weeklyReport, searchPreferences: {roleQueries, locations, salaryMin, salaryMax}}`.
 
 ### `PUT /user/settings`
 
-**Request body:**
+**Request body:** Email is not accepted — it is always sourced from the Cognito JWT claims.
 
 ```json
 {
-  "email": "user@example.com",
   "dailyReport": true,
-  "weeklyReport": true
+  "weeklyReport": true,
+  "searchPreferences": {
+    "roleQueries": ["Security Engineer", "Cloud Architect"],
+    "locations": [
+      {"location": "Atlanta, GA", "distance": 25, "remote": false},
+      {"location": "United States", "remote": true}
+    ],
+    "salaryMin": 180000,
+    "salaryMax": 300000
+  }
 }
 ```
 
@@ -1002,8 +1195,6 @@ chmod +x scripts/bootstrap.sh
 ```
 
 This creates: an S3 bucket for Terraform remote state (`scout-tfstate-<account-id>`), a DynamoDB table for state locking (`scout-tflock`), a GitHub OIDC provider in IAM, and an IAM role `scout-github-actions` with least-privilege policies.
-
-The script prints the values you need for subsequent steps.
 
 ---
 
@@ -1057,11 +1248,8 @@ Go to your repo, then Settings, then Secrets and variables, then Actions, and ad
 |--------|-------|
 | `AWS_DEPLOY_ROLE_ARN` | From bootstrap.sh output |
 | `ALERT_EMAIL` | Your email for CloudWatch alarms |
-| `COGNITO_USER_POOL_ID` | From `terraform output` |
-| `COGNITO_USER_POOL_CLIENT_ID` | From `terraform output` |
-| `API_GATEWAY_URL` | From `terraform output` (include the `/v1` suffix) |
-| `FRONTEND_BUCKET` | From `terraform output` |
-| `CLOUDFRONT_DISTRIBUTION_ID` | From `terraform output` |
+
+The Cognito IDs, API URL, S3 bucket, and CloudFront ID are now automatically exported from Terraform outputs in the CI pipeline — no manual secrets needed for these.
 
 ---
 
@@ -1073,7 +1261,7 @@ git commit -m "feat: initial Scout deployment"
 git push origin main
 ```
 
-Three GitHub Actions jobs run in sequence: Terraform apply, backend deploy (lint + build + Lambda updates), frontend deploy (build + S3 sync + CloudFront invalidation). Monitor progress under the Actions tab.
+Five GitHub Actions jobs run: terraform, backend-test, and frontend-test run in parallel; then frontend-deploy and backend-deploy run after their respective gates pass. Monitor progress under the Actions tab.
 
 ---
 
@@ -1089,7 +1277,7 @@ Terraform creates the SES DNS records automatically, but the domain identity nee
 
 ### Step 7 — Create Your First User
 
-Open https://scout.carniaux.io and click **Create account**. Cognito will verify your email, then prompt you to set up TOTP MFA with your authenticator app (Google Authenticator, Authy, 1Password, etc.). After login, go to Settings to configure email notification preferences.
+Open https://scout.carniaux.io and click **Create account**. Cognito will verify your email, then prompt you to set up TOTP MFA with your authenticator app. After login, go to Settings to configure search preferences (roles, locations, salary range) and email notification preferences. Reports are sent to your registration email automatically.
 
 ---
 
@@ -1106,7 +1294,7 @@ aws secretsmanager put-secret-value \
   }'
 ```
 
-LinkedIn and Indeed crawlers use JobSpy (no credentials needed). The `scout-scraper-keys` secret is created by Terraform — you only need to populate it with your Oxylabs credentials.
+LinkedIn and Indeed crawlers use JobSpy (no credentials needed).
 
 ---
 
@@ -1127,17 +1315,28 @@ aws lambda invoke --function-name scout-crawl-diagnose /tmp/out.json
 cat /tmp/out.json | python3 -m json.tool
 ```
 
+### Run backend tests locally
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+cd lambdas
+PYTHONPATH=. python -m pytest tests/ -v --tb=short
+```
+
+### Run frontend tests locally
+
+```bash
+cd frontend
+npm ci
+npm run test
+```
+
 ### Check Lambda logs
 
 ```bash
-# Crawler logs (replace with desired source)
 aws logs tail /aws/lambda/scout-crawler-linkedin --follow
-aws logs tail /aws/lambda/scout-crawler-glassdoor --follow
-
-# Enrichment
 aws logs tail /aws/lambda/scout-enrichment --follow
-
-# API
 aws logs tail /aws/lambda/scout-api-get-jobs --follow
 ```
 
@@ -1173,6 +1372,7 @@ aws cloudfront create-invalidation \
 |----------|-------------|
 | `SQS_QUEUE_URL` | Raw jobs SQS queue URL |
 | `SECRETS_ARN` | Secrets Manager ARN for Oxylabs credentials |
+| `USERS_TABLE` | DynamoDB users table name (for search config) |
 
 ### Enrichment Lambda
 
@@ -1221,15 +1421,21 @@ aws cloudfront create-invalidation \
 ## Security Posture
 
 - **MFA required** for all users (TOTP software token — no SMS fallback).
+- **Content-Security-Policy** meta tag restricting script/style/connect sources, disabling frames and form actions to external origins.
 - **CloudFront-only S3 access** via Origin Access Control (no public bucket policy).
 - **WAFv2** with AWS Managed Rules (OWASP top 10) and IP-based rate limiting (300 requests per 5 minutes).
 - **Least-privilege IAM** — each Lambda has its own role scoped to exactly the resources it needs.
 - **Secrets in AWS Secrets Manager** — scraping credentials are never stored in environment variables or code.
+- **DynamoDB deletion protection** on all three production tables (jobs, user-status, users). Glassdoor cache excluded (ephemeral).
 - **DynamoDB encrypted at rest** with AWS-managed keys and point-in-time recovery enabled on all tables.
+- **S3 versioning** with 30-day noncurrent object lifecycle rule.
 - **SES domain verification** with DKIM signing + SPF + DMARC.
 - **TLS 1.2+ enforced** on CloudFront (TLSv1.2_2021 security policy).
 - **GitHub Actions OIDC** — no long-lived AWS access keys stored as repository secrets.
 - **Cognito token security** — user existence errors suppressed, SRP auth flow (password never leaves the client), 1-hour token lifetime.
+- **Email from Cognito claims** — report delivery address is always the verified registration email, not user-supplied input.
+- **Referrer policy** — `strict-origin-when-cross-origin` set via meta tag.
+- **CloudWatch log retention** — 14 days on all Lambda log groups.
 
 ---
 
@@ -1267,22 +1473,22 @@ aws lambda invoke --function-name scout-crawl-diagnose \
 cat /tmp/out.json | python3 -m json.tool
 ```
 
-Check the output for: Oxylabs initialization status, HTML size (0 means fetch failed), Phase 1 vs Phase 2 parse results, and the first card HTML dump. If Phase 1 finds cards but parses 0 jobs, CSS selectors have rotted — Phase 2 should still extract jobs via link fallback.
+Check the output for: Oxylabs initialization status, HTML size (0 means fetch failed), Phase 1 vs Phase 2 parse results, and the first card HTML dump.
 
 ### Jobs don't appear on the website
 
 The pipeline is: Crawlers send to SQS, Enrichment reads SQS and writes to DynamoDB, API reads DynamoDB, Frontend calls API. Check each stage:
 
-1. **Crawlers:** Check CloudWatch logs for `jobs_sent` count. If 0, the crawlers aren't finding or parsing jobs.
-2. **SQS:** Check the DLQ for failed messages: `aws sqs get-queue-attributes --queue-url <dlq-url> --attribute-names ApproximateNumberOfMessages`.
-3. **Enrichment:** Check enrichment logs for `stored` vs `duplicates` vs `errors`. If all duplicates, the jobs already exist.
+1. **Crawlers:** Check CloudWatch logs for `jobs_sent` count.
+2. **SQS:** Check the DLQ for failed messages.
+3. **Enrichment:** Check enrichment logs for `stored` vs `duplicates` vs `errors`.
 4. **DynamoDB:** Verify items exist: `aws dynamodb scan --table-name scout-jobs --select COUNT`.
 5. **API:** Test directly: `curl -H "Authorization: Bearer <token>" https://scout.carniaux.io/v1/jobs`.
-6. **Frontend:** Hard-refresh (Ctrl+Shift+R) to clear React Query cache, or click the Refresh button on the Dashboard.
+6. **Frontend:** Hard-refresh (Ctrl+Shift+R) to clear React Query cache.
 
 ### Cloudflare WAF blocks (403/400)
 
-Glassdoor and ZipRecruiter use Cloudflare WAF which blocks direct requests. This is why these crawlers use Oxylabs (which handles anti-bot protections server-side). If you see 403/400 errors, verify your Oxylabs credentials are set in Secrets Manager.
+Glassdoor and ZipRecruiter use Cloudflare WAF which blocks direct requests. This is why these crawlers use Oxylabs. If you see 403/400 errors, verify your Oxylabs credentials are set in Secrets Manager.
 
 ### SES emails not sending
 
@@ -1298,4 +1504,22 @@ If a Terraform apply was interrupted, you may need to force-unlock the state:
 terraform force-unlock <LOCK_ID>
 ```
 
-The lock ID is shown in the error message.
+### Backend tests failing locally
+
+Ensure you install dev dependencies and set the Python path:
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+cd lambdas
+PYTHONPATH=. python -m pytest tests/ -v --tb=short
+```
+
+### Dependencies: compatible release pinning
+
+All Python dependencies use `~=` (compatible release) pinning to prevent breaking changes while allowing patch updates. To upgrade deliberately:
+
+```bash
+pip install --upgrade <package>
+# Then update the version in requirements.txt
+```

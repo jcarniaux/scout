@@ -75,7 +75,7 @@ export function Settings() {
     if (settings) {
       updateSettings.mutate(
         {
-          email: settings.email,
+          email: settings.email ?? '',
           dailyReport,
           weeklyReport,
           searchPreferences: {
@@ -284,6 +284,11 @@ export function Settings() {
         {/* ── Email Notifications ── */}
         <div className="mb-8">
           <h2 className={headingClass}>Email Notifications</h2>
+          {settings?.email && (
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+              Reports will be sent to <span className="font-medium text-gray-700 dark:text-gray-200">{settings.email}</span> (your account email).
+            </p>
+          )}
           <div className="space-y-4">
             <div className="flex items-center justify-between p-4 rounded-lg border border-slate-200 dark:border-gray-700 hover:border-slate-300 dark:hover:border-gray-600 transition-colors">
               <div>

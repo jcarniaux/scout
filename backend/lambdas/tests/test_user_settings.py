@@ -27,14 +27,15 @@ class TestGetSettings:
         body = json.loads(resp["body"])
         assert body["daily_report"] is False
         assert body["weekly_report"] is False
-        assert body["email"] is None
+        assert body["email"] == "testuser@example.com"  # from Cognito claims
         assert body["search_preferences"]["role_queries"] == []
 
-    def test_returns_stored_settings(self):
+    def test_returns_cognito_email_over_stored(self):
+        """GET always returns the Cognito email, not the DynamoDB value."""
         self.table.put_item(Item={
             "pk": "USER#test-user-sub-123",
             "user_id": "USER#test-user-sub-123",
-            "email": "jay@example.com",
+            "email": "old@example.com",
             "daily_report": True,
             "weekly_report": False,
             "role_queries": {"Security Engineer", "Cloud Architect"},
@@ -43,7 +44,7 @@ class TestGetSettings:
         resp = self._get()
         assert resp["statusCode"] == 200
         body = json.loads(resp["body"])
-        assert body["email"] == "jay@example.com"
+        assert body["email"] == "testuser@example.com"  # Cognito, not stored
         assert body["daily_report"] is True
         assert body["search_preferences"]["salary_min"] == 150000
 
@@ -77,7 +78,6 @@ class TestPutSettings:
 
     def test_creates_new_user_settings(self):
         resp = self._put({
-            "email": "jay@example.com",
             "daily_report": True,
             "weekly_report": False,
             "search_preferences": {
@@ -89,18 +89,22 @@ class TestPutSettings:
         })
         assert resp["statusCode"] == 200
         body = json.loads(resp["body"])
-        assert body["email"] == "jay@example.com"
+        assert body["email"] == "testuser@example.com"  # from Cognito claims
         assert body["daily_report"] is True
         assert body["search_preferences"]["salary_min"] == 150000
 
+    def test_stores_cognito_email_in_dynamo(self):
+        """PUT always writes the Cognito email to DynamoDB for report delivery."""
+        self._put({"daily_report": True})
+        item = self.table.get_item(Key={"pk": "USER#test-user-sub-123"}).get("Item")
+        assert item["email"] == "testuser@example.com"
+
     def test_updates_existing_settings(self):
-        # Create initial settings
-        self._put({"email": "old@example.com", "daily_report": False})
-        # Update
-        resp = self._put({"email": "new@example.com", "daily_report": True})
+        self._put({"daily_report": False})
+        resp = self._put({"daily_report": True})
         assert resp["statusCode"] == 200
         body = json.loads(resp["body"])
-        assert body["email"] == "new@example.com"
+        assert body["email"] == "testuser@example.com"
         assert body["daily_report"] is True
 
     def test_created_at_preserved_on_update(self):
@@ -113,15 +117,6 @@ class TestPutSettings:
         assert item2["created_at"] == created1  # preserved by if_not_exists
 
     # ── Validation ──────────────────────────────────────────────────────
-
-    def test_invalid_email_returns_400(self):
-        resp = self._put({"email": "not-an-email"})
-        assert resp["statusCode"] == 400
-        assert "email" in json.loads(resp["body"])["error"].lower()
-
-    def test_email_too_long_returns_400(self):
-        resp = self._put({"email": "a" * 250 + "@b.co"})
-        assert resp["statusCode"] == 400
 
     def test_role_queries_not_list_returns_400(self):
         resp = self._put({"search_preferences": {"role_queries": "not a list"}})
@@ -162,18 +157,16 @@ class TestSettingsDispatcher:
 
 
 @mock_aws
-class TestValidateEmail:
-    """Unit tests for the email validation helper."""
+class TestCognitoEmailExtraction:
+    """Unit tests for the Cognito email helper."""
 
-    def test_valid_emails(self):
-        from api.user_settings import validate_email
-        assert validate_email("user@example.com") is True
-        assert validate_email("first.last@company.co") is True
-        assert validate_email("user+tag@example.com") is True
+    def test_extracts_email_from_claims(self):
+        from api.user_settings import get_cognito_email
+        event = {"requestContext": {"authorizer": {"claims": {"email": "jay@example.com"}}}}
+        assert get_cognito_email(event) == "jay@example.com"
 
-    def test_invalid_emails(self):
-        from api.user_settings import validate_email
-        assert validate_email("no-at-sign") is False
-        assert validate_email("@missing-local.com") is False
-        assert validate_email("user@") is False
-        assert validate_email("user@.com") is False
+    def test_returns_none_when_missing(self):
+        from api.user_settings import get_cognito_email
+        assert get_cognito_email({"requestContext": {"authorizer": {"claims": {}}}}) is None
+        assert get_cognito_email({"requestContext": {}}) is None
+        assert get_cognito_email({}) is None

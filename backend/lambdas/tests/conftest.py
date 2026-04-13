@@ -108,6 +108,7 @@ def make_api_event(
     path_params: dict = None,
     query_params: dict = None,
     user_sub: str = "test-user-sub-123",
+    user_email: str = "testuser@example.com",
 ) -> dict:
     """Build a minimal API Gateway proxy event."""
     event = {
@@ -120,6 +121,7 @@ def make_api_event(
             "authorizer": {
                 "claims": {
                     "sub": user_sub,
+                    "email": user_email,
                 },
             },
         },

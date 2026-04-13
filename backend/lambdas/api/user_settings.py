@@ -5,7 +5,6 @@ Manage user preferences and notification settings.
 import json
 import logging
 import os
-import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Dict, Any, Optional
@@ -28,10 +27,18 @@ def get_user_sub(event: Dict[str, Any]) -> Optional[str]:
         return None
 
 
-def validate_email(email: str) -> bool:
-    """Validate email format."""
-    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    return re.match(pattern, email) is not None
+def get_cognito_email(event: Dict[str, Any]) -> Optional[str]:
+    """
+    Extract the verified email from Cognito JWT claims.
+
+    Because the user pool uses username_attributes = ["email"],
+    the email claim is always present in the ID token and is the
+    authoritative address for reports.
+    """
+    try:
+        return event["requestContext"]["authorizer"]["claims"]["email"]
+    except (KeyError, TypeError):
+        return None
 
 
 def _serialize_search_prefs(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -50,6 +57,8 @@ def get_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if not user_sub:
         return unauthorized_response("Unauthorized")
 
+    cognito_email = get_cognito_email(event)
+
     users_table = os.environ.get("USERS_TABLE")
     if not users_table:
         return error_response("Missing environment variables", 500)
@@ -58,10 +67,10 @@ def get_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         item = dynamodb.get_item(users_table, {"pk": f"USER#{user_sub}"})
 
         if not item:
-            # User doesn't exist yet, return defaults
+            # User doesn't exist yet, return defaults with Cognito email
             return success_response({
                 "user_id": f"USER#{user_sub}",
-                "email": None,
+                "email": cognito_email,
                 "daily_report": False,
                 "weekly_report": False,
                 "search_preferences": {
@@ -75,7 +84,8 @@ def get_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         item = dynamo_deserialize(item)
         return success_response({
             "user_id": item.get("pk"),
-            "email": item.get("email"),
+            # Always return the Cognito email — it's the authoritative address
+            "email": cognito_email or item.get("email"),
             "daily_report": item.get("daily_report", False),
             "weekly_report": item.get("weekly_report", False),
             "search_preferences": _serialize_search_prefs(item),
@@ -96,20 +106,15 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if not users_table:
         return error_response("Missing environment variables", 500)
 
+    cognito_email = get_cognito_email(event)
+
     try:
         # Parse request body
         body = json.loads(event.get("body", "{}"))
 
-        email = body.get("email", "").strip()
         daily_report = body.get("daily_report", False)
         weekly_report = body.get("weekly_report", False)
         search_prefs = body.get("search_preferences", {})
-
-        # Validate
-        if email and not validate_email(email):
-            return error_response("Invalid email format", 400)
-        if email and len(email) > 254:
-            return error_response("Email must be 254 characters or fewer", 400)
 
         # Validate search preferences
         role_queries = search_prefs.get("role_queries", [])
@@ -160,10 +165,10 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "#uid": "user_id",  # user_id is not reserved, but consistent alias style
         }
 
-        # Email: only update when explicitly provided
-        if email:
+        # Always store the Cognito email — it's the authoritative address
+        if cognito_email:
             set_parts.append("email = :email")
-            attr_values[":email"] = email
+            attr_values[":email"] = cognito_email
 
         if role_queries:
             set_parts.append("role_queries = :rq")
@@ -197,7 +202,7 @@ def put_settings(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         return success_response({
             "user_id": updated.get("pk"),
-            "email": updated.get("email"),
+            "email": cognito_email or updated.get("email"),
             "daily_report": updated.get("daily_report", False),
             "weekly_report": updated.get("weekly_report", False),
             "search_preferences": {
