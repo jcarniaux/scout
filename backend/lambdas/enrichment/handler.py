@@ -276,13 +276,19 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "ttl": ttl,
             }
 
-            # Classify contract type from job_type + description
-            contract_type = classify_contract_type(
-                job_item["job_type"],
-                body.get("description", ""),
-            )
-            if contract_type:
-                job_item["contract_type"] = contract_type
+            # Prefer the contract_type the crawler stamped from its search filter
+            # (reliable); fall back to keyword classification from job_type + description
+            # for crawlers that don't supply it (Glassdoor, Dice, ZipRecruiter).
+            crawler_contract_type = body.get("contract_type")
+            if crawler_contract_type and crawler_contract_type.lower() in ("permanent", "contract", "freelance"):
+                job_item["contract_type"] = crawler_contract_type.lower()
+            else:
+                contract_type = classify_contract_type(
+                    job_item["job_type"],
+                    body.get("description", ""),
+                )
+                if contract_type:
+                    job_item["contract_type"] = contract_type
 
             # Extract benefits from description
             benefits = extract_benefits(body.get("description", ""))
