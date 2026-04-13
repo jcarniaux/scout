@@ -1,9 +1,10 @@
 # DynamoDB table: scout-jobs
 resource "aws_dynamodb_table" "jobs" {
-  name         = "${var.project_name}-jobs"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "pk"
-  range_key    = "sk"
+  name                        = "${var.project_name}-jobs"
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "pk"
+  range_key                   = "sk"
+  deletion_protection_enabled = true
 
   # Point-in-time recovery
   point_in_time_recovery {
@@ -66,10 +67,11 @@ resource "aws_dynamodb_table" "jobs" {
 
 # DynamoDB table: scout-user-status
 resource "aws_dynamodb_table" "user_status" {
-  name         = "${var.project_name}-user-status"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "pk"
-  range_key    = "sk"
+  name                        = "${var.project_name}-user-status"
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "pk"
+  range_key                   = "sk"
+  deletion_protection_enabled = true
 
   attribute {
     name = "pk"
@@ -105,9 +107,10 @@ resource "aws_dynamodb_table" "user_status" {
 
 # DynamoDB table: scout-users
 resource "aws_dynamodb_table" "users" {
-  name         = "${var.project_name}-users"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "pk"
+  name                        = "${var.project_name}-users"
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "pk"
+  deletion_protection_enabled = true
 
   attribute {
     name = "pk"
