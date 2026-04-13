@@ -2,7 +2,7 @@
 
 **Live URL:** https://scout.carniaux.io
 
-Scout is a serverless AWS platform that crawls five major job boards daily (LinkedIn, Indeed, Glassdoor, ZipRecruiter, Dice) for senior security and cloud architecture roles paying $180k+, deduplicates results, enriches them with Glassdoor company ratings, and presents everything in a secure web dashboard with per-user application tracking and automated email reports.
+Scout is a serverless AWS platform that crawls five major job boards daily (LinkedIn, Indeed, Glassdoor, ZipRecruiter, Dice) for senior security and cloud architecture roles paying $180k+, deduplicates results, enriches them with Glassdoor company ratings, and presents everything in a secure web dashboard with per-user application tracking and automated email reports. Users can upload their resume (PDF) and trigger on-demand AI match scoring powered by Amazon Bedrock (Claude Haiku), which scores every recent job 0–100 against their background and surfaces the best matches first.
 
 ---
 
@@ -17,6 +17,7 @@ Scout is a serverless AWS platform that crawls five major job boards daily (Link
   - [Crawlers](#crawlers-backendlambdascrawlers)
   - [Enrichment Pipeline](#enrichment-pipeline-backendlambdasenrichment)
   - [API Handlers](#api-handlers-backendlambdasapi)
+  - [Scoring Module](#scoring-module-backendlambdasscoring)
   - [Email Reports](#email-reports-backendlambdasreports)
   - [Build Script](#build-script-backendbuildsh)
   - [Backend Tests](#backend-tests-backendlambdastests)
@@ -80,16 +81,26 @@ The project also serves as a hands-on AWS learning vehicle covering serverless c
  CloudFront + WAF (OWASP rules + 300 req/5min rate-limit)
     +-- S3 --> React SPA (scout.carniaux.io, CSP headers)
     +-- API Gateway (REST, Cognito authorizer)
-         +-- GET  /jobs                 Lambda: api-get-jobs
-         +-- GET  /jobs/{id}            Lambda: api-get-jobs
-         +-- PATCH /jobs/{id}/status    Lambda: api-update-status
-         +-- GET|PUT /user/settings     Lambda: api-user-settings
-                  |
-              DynamoDB (deletion protection on 3 tables)
-              +-- scout-jobs              (TTL 60d, DateIndex GSI, RatingIndex GSI)
-              +-- scout-user-status       (StatusIndex GSI)
-              +-- scout-users
-              +-- scout-glassdoor-cache   (TTL 7d, ephemeral — no deletion protection)
+         +-- GET  /jobs                      Lambda: api-get-jobs
+         +-- GET  /jobs/{id}                 Lambda: api-get-jobs
+         +-- PATCH /jobs/{id}/status         Lambda: api-update-status
+         +-- GET|PUT /user/settings          Lambda: api-user-settings
+         +-- POST /user/resume/upload-url    Lambda: api-user-settings
+         +-- DELETE /user/resume             Lambda: api-user-settings
+         +-- POST /user/score-jobs           Lambda: api-user-settings (async invoke)
+                  |                                         |
+              DynamoDB                         Lambda: scout-job-scorer
+              +-- scout-jobs              (TTL 60d, DateIndex GSI)         |
+              +-- scout-user-status       (StatusIndex GSI)                +-- Amazon Bedrock
+              +-- scout-users             (resume, scoring_status)         |   (Claude Haiku)
+              +-- scout-job-scores        (pk=USER#sub, sk=JOB#hash)  ----+
+              +-- scout-glassdoor-cache   (TTL 7d, ephemeral)
+         |
+         S3 resume bucket (private, pre-signed PUT URLs)
+              +-- resumes/{sub}/resume.pdf --> S3 trigger
+                                                  |
+                                           Lambda: resume-parser
+                                           (pdfminer → resume_text in DynamoDB)
 
  EventBridge cron 02:00 EST daily
     +-- Step Functions (parallel state machine)
@@ -107,6 +118,8 @@ The project also serves as a hands-on AWS learning vehicle covering serverless c
 
 **Data flow:** Crawlers load search preferences from the users table (roles, locations, salary floor), fetch rendered search result pages, parse job listings, apply salary filtering, and send qualifying jobs to SQS. The enrichment Lambda deduplicates by content hash, extracts benefits keywords, looks up Glassdoor ratings (cached 7 days), and writes to DynamoDB with a 60-day TTL. The API serves jobs from DynamoDB via a DateIndex GSI, and the React frontend displays them with filtering, sorting, and pagination. Reports read user email addresses from DynamoDB — the Cognito registration email is stored there automatically on settings save.
 
+**AI scoring flow:** The user uploads a PDF resume from Settings. The browser PUTs it directly to S3 using a pre-signed URL, which triggers the `resume-parser` Lambda to extract text via pdfminer and store it in the users table. Once `resume_status = "ready"`, the user can click **Score My Jobs** to call `POST /user/score-jobs`. The `user_settings` Lambda sets `scoring_status = "scoring"` and invokes `scout-job-scorer` asynchronously (202 returns immediately). The scorer queries the DateIndex for up to 100 jobs posted in the last 30 days, calls Bedrock Claude Haiku once per job with a structured prompt comparing the job description to the resume, and writes a `{score 0–100, reasoning}` record to `scout-job-scores`. On completion it sets `scoring_status = "done"` and `last_scored_at` on the user record. The `GET /jobs` endpoint attaches each job's score via a single `batch_get_items` call, and the frontend exposes a **Best Match** sort and a color-coded score badge on each job card.
+
 ---
 
 ## Technology Stack
@@ -116,10 +129,13 @@ The project also serves as a hands-on AWS learning vehicle covering serverless c
 | Frontend | React 18, TypeScript, Tailwind CSS 3.4, Vite, AWS Amplify (auth SDK) |
 | Authentication | Amazon Cognito (User Pool, TOTP MFA required, multi-user) |
 | API | Amazon API Gateway (REST) with Cognito authorizer |
-| Compute | AWS Lambda (Python 3.12, shared dependency layer), 13 functions total |
+| Compute | AWS Lambda (Python 3.12, shared dependency layer), 15 functions total |
+| AI / ML | Amazon Bedrock — Claude 3 Haiku (`anthropic.claude-3-haiku-20240307-v1:0`) for on-demand job scoring |
+| PDF Processing | pdfminer.six — text extraction from user-uploaded PDF resumes |
 | Orchestration | AWS Step Functions (parallel state machine) |
 | Queue | Amazon SQS (raw jobs queue + dead-letter queue) |
-| Database | Amazon DynamoDB (on-demand, 4 tables, 3 GSIs, deletion protection) |
+| Database | Amazon DynamoDB (on-demand, 5 tables, 3 GSIs, deletion protection) |
+| Object Storage | Amazon S3 — resume PDF storage (private bucket, pre-signed PUT URLs, AES-256 SSE) |
 | Scraping | JobSpy (LinkedIn, Indeed), Oxylabs Web Scraper Realtime API (Glassdoor, ZipRecruiter, Dice) |
 | Email | Amazon SES (DKIM-signed, daily + weekly reports to Cognito email) |
 | CDN / Hosting | Amazon CloudFront + S3 (OAC, no public bucket, CSP headers) |
@@ -145,8 +161,9 @@ scout/
 |   +-- outputs.tf                # 20+ outputs for CI/CD
 |   +-- modules/
 |       +-- auth/                 # Cognito User Pool, MFA, app client
-|       +-- data/                 # DynamoDB tables (4 tables, 3 GSIs, deletion protection)
+|       +-- data/                 # DynamoDB tables (5 tables, 3 GSIs, deletion protection)
 |       +-- api/                  # API Gateway + 3 Lambda handlers + shared layer
+|       +-- scoring/              # S3 resume bucket, resume-parser Lambda, job-scorer Lambda
 |       +-- crawl/                # Step Functions, SQS, 7 Lambdas, EventBridge
 |       +-- email/                # SES, 2 report Lambdas, EventBridge schedules
 |       +-- frontend/             # S3 (versioned), CloudFront, WAF, Route53 record
@@ -165,9 +182,12 @@ scout/
 |   |   +-- enrichment/
 |   |   |   +-- handler.py        # SQS-triggered dedup + benefits + ratings
 |   |   +-- api/
-|   |   |   +-- get_jobs.py       # GET /jobs and GET /jobs/{jobId}
+|   |   |   +-- get_jobs.py       # GET /jobs and GET /jobs/{jobId} (+ AI match scores)
 |   |   |   +-- update_status.py  # PATCH /jobs/{jobId}/status
-|   |   |   +-- user_settings.py  # GET/PUT /user/settings (Cognito email)
+|   |   |   +-- user_settings.py  # GET/PUT settings, resume upload/delete, score trigger
+|   |   +-- scoring/
+|   |   |   +-- resume_parser.py  # S3-triggered: pdfminer PDF → resume_text in DynamoDB
+|   |   |   +-- job_scorer.py     # Async Bedrock scoring: 100 jobs × Claude Haiku
 |   |   +-- reports/
 |   |   |   +-- daily_report.py   # Daily email — new jobs summary
 |   |   |   +-- weekly_report.py  # Weekly email — pipeline + new jobs
@@ -189,6 +209,8 @@ scout/
 |   |       +-- test_update_status.py # PATCH status handler tests
 |   |       +-- test_user_settings.py # GET/PUT settings + Cognito email tests
 |   |       +-- test_enrichment.py    # SQS enrichment pipeline tests
+|   |       +-- test_resume_parser.py # S3-triggered PDF parsing tests (12 tests)
+|   |       +-- test_scoring.py       # Bedrock job_scorer tests (12 tests)
 |   +-- requirements.txt          # Python dependencies (pinned with ~=)
 |   +-- requirements-dev.txt      # Test dependencies (pytest, moto)
 |   +-- build.sh                  # Lambda packaging script
@@ -505,10 +527,11 @@ Handles `GET /jobs` (list with filtering) and `GET /jobs/{jobId}` (single job de
 
 - `get_user_sub(event)` — Extracts the Cognito user `sub` from the API Gateway authorizer claims.
 - `get_date_range_start(date_range)` — Converts a date range parameter ("24h", "7d", "30d") to a date-only ISO string (`YYYY-MM-DD`). Uses date-only format to match the enrichment Lambda's `postedDate` storage format.
-- `serialize_job(item)` — Maps DynamoDB field names to the camelCase shape the frontend expects. Strips the `JOB#` prefix from `pk` to get the bare job ID. Cleans sentinel strings ("nan", "None", "") to `null`.
-- `filter_jobs(jobs, user_id, min_rating, status_filter, sort_by)` — Fetches user application statuses from the user-status table, filters by minimum Glassdoor rating and application status, attaches the user's status to each job, and sorts by date (default), salary, or rating.
-- `list_jobs(event, context)` — Parses query parameters, queries the DateIndex GSI, deserializes, filters, paginates, and returns `{jobs, total, page, pageSize, hasMore}`.
-- `get_single_job(event, context)` — Queries by `pk=JOB#{jobId}`, fetches the user's application status, and returns the serialized job.
+- `serialize_job(item)` — Maps DynamoDB field names to the camelCase shape the frontend expects. Strips the `JOB#` prefix from `pk` to get the bare job ID. Cleans sentinel strings ("nan", "None", "") to `null`. Includes `matchScore` and `matchReasoning` fields (null until scoring runs).
+- `_load_user_scores(user_id, job_hashes)` — Single `batch_get_items` call to `scout-job-scores` for a page of jobs. Returns `{job_hash: {score, reasoning}}` mapping. One round-trip regardless of page size.
+- `filter_jobs(jobs, user_id, min_rating, status_filter, sort_by)` — Fetches user application statuses from the user-status table, filters by minimum Glassdoor rating and application status, attaches the user's status to each job, and sorts by date (default), salary, rating, or match score (`match` option — unscored jobs sink to the bottom).
+- `list_jobs(event, context)` — Parses query parameters, queries the DateIndex GSI, deserializes, filters, paginates, attaches AI match scores for the current page via `_load_user_scores`, and returns `{jobs, total, page, pageSize, hasMore}`.
+- `get_single_job(event, context)` — Queries by `pk=JOB#{jobId}`, fetches the user's application status and AI score, and returns the serialized job.
 - `handler(event, context)` — Routes to `get_single_job` or `list_jobs` based on the presence of a `jobId` path parameter.
 
 ---
@@ -523,20 +546,67 @@ Handles `PATCH /jobs/{jobId}/status`.
 
 #### `user_settings.py` — User Settings API
 
-Handles `GET /user/settings` and `PUT /user/settings`. Email address is sourced from the Cognito JWT claims (the registration email), not from user input.
+Handles `GET /user/settings`, `PUT /user/settings`, `POST /user/resume/upload-url`, `DELETE /user/resume`, and `POST /user/score-jobs`. Email address is sourced from the Cognito JWT claims (the registration email), not from user input.
 
 **Functions:**
 
 - `get_user_sub(event)` — Extracts the Cognito user `sub` from the authorizer claims.
 - `get_cognito_email(event)` — Extracts the verified email from the Cognito JWT `email` claim. Because the user pool uses `username_attributes = ["email"]`, this claim is always present in the ID token and is the authoritative address for reports.
 - `_serialize_search_prefs(item)` — Extracts search preferences (role_queries, locations, salary_min, salary_max) from a DynamoDB user item.
-- `get_settings(event, context)` — Queries the users table by `pk=USER#{sub}`. Returns user preferences with Cognito email, or defaults if not found.
-- `put_settings(event, context)` — Validates search preferences (role_queries: list, max 50; locations: list, max 50; salary_min/max: optional int). Builds a dynamic SET expression, always stores the Cognito email, uses `if_not_exists(created_at, :now)` to preserve first-write timestamp. Returns the updated settings.
-- `handler(event, context)` — Routes to `get_settings` or `put_settings` based on HTTP method. Returns 405 for unsupported methods.
+- `get_settings(event, context)` — Queries the users table by `pk=USER#{sub}`. Returns user preferences including Cognito email, `resume_status`, `resume_filename`, `scoring_status`, `last_scored_at`, and `last_scored_count`. Returns defaults if the user has never saved settings.
+- `put_settings(event, context)` — Validates and persists search preferences. Stores the Cognito email; preserves `created_at` on update.
+- `get_resume_upload_url(event, context)` — Generates a short-lived (300s) S3 pre-signed PUT URL for `resumes/{sub}/resume.pdf`. Updates the user record to `resume_status = "processing"` and stores the original filename. Returns `{uploadUrl, s3Key, expiresIn}`.
+- `delete_resume(event, context)` — Deletes `resumes/{sub}/resume.pdf` from S3 and clears `resume_status`, `resume_text`, `resume_filename`, and all scoring fields from DynamoDB.
+- `trigger_scoring(event, context)` — Validates `resume_status == "ready"`. Returns 409 if scoring is already in progress. Sets `scoring_status = "scoring"`, then invokes `scout-job-scorer` with `InvokeType="Event"` (async fire-and-forget). Returns 202 immediately.
+- `handler(event, context)` — Routes on HTTP method + path to the appropriate handler. Returns 405 for unsupported methods.
 
 ---
 
-### Email Reports (`backend/lambdas/reports/`)
+### Scoring Module (`backend/lambdas/scoring/`)
+
+The scoring module handles resume ingestion and AI job matching. Both Lambdas are packaged in `scoring.zip` and share the `shared/` layer.
+
+---
+
+#### `resume_parser.py` — PDF Resume Parser
+
+Triggered by S3 `ObjectCreated` events on the resumes bucket whenever a user uploads a PDF.
+
+**Functions:**
+
+- `_user_sub_from_key(s3_key)` — Parses the S3 key (`resumes/{sub}/resume.pdf`) to extract the Cognito user sub. Returns `None` if the path doesn't match.
+- `_extract_text_from_pdf(pdf_bytes)` — Extracts text from a PDF using pdfminer's `extract_text()`. Returns an empty string if extraction fails or the PDF is image-only (scanned).
+- `handler(event, context)` — Reads the S3 key and bucket from the event record, downloads the PDF, extracts text, and writes `resume_text` and `resume_status = "ready"` to the users table. Sets `resume_status = "error"` if text extraction yields fewer than 50 characters (scanned/corrupt PDF). Triggered by S3, not API Gateway.
+
+**Key design decisions:**
+- The 50-character minimum guards against scanned PDFs that produce empty or near-empty extraction results.
+- The S3 event provides the exact key path, so no DynamoDB lookup is needed to find the user — the sub is encoded in the key.
+
+---
+
+#### `job_scorer.py` — On-Demand AI Job Scorer
+
+Invoked **asynchronously** (`InvokeType=Event`) by `POST /user/score-jobs`. Runs up to 5 minutes to score a full batch of jobs. The calling API returns 202 immediately.
+
+**Constants:**
+
+- `MAX_JOBS_TO_SCORE = 100` — Cap per scoring run to bound cost and execution time.
+- `SCORE_LOOKBACK_DAYS = 30` — Only jobs posted within this window are scored.
+
+**Functions:**
+
+- `_score_job_for_user(job, resume_text)` — Sends a structured prompt to Bedrock Claude Haiku asking it to score the job 0–100 against the resume and provide a one-sentence reasoning. Strips markdown code fences from the response (Bedrock sometimes wraps JSON in ` ```json ``` `), parses the JSON, and clamps the score to [0, 100]. Raises on malformed JSON.
+- `_fetch_recent_jobs(jobs_table, days)` — Queries the DateIndex GSI for jobs posted within the last `days` days. Paginates until `MAX_JOBS_TO_SCORE` is reached.
+- `_mark_done(users_table, user_pk, scored)` — Updates the user record with `scoring_status = "done"`, `last_scored_at` (ISO timestamp), and `last_scored_count` (number of jobs scored).
+- `handler(event, context)` — Entry point. Validates input (`user_pk` required → 400, env vars required → 500). Fetches the user record (→ 404 if missing). Skips scoring if `resume_text` is absent. Iterates over recent jobs: calls `_score_job_for_user`, writes to `scout-job-scores` (`pk=USER#{sub}`, `sk=JOB#{hash}`). Counts errors per-job without raising (a Bedrock failure on one job does not abort the batch). Calls `_mark_done` even when some jobs failed. Returns `{statusCode: 200, scored, errors}`.
+
+**Bedrock prompt design:** The prompt passes the full job description (truncated to ~2,000 chars) and resume text, asks for a JSON response `{"score": <int>, "reasoning": "<one sentence>"}`, and requests Claude to focus on technical skills, seniority, and domain alignment rather than location or salary.
+
+**IAM scope:** The scorer role allows `bedrock:InvokeModel` only on `anthropic.claude-3-haiku-20240307-v1:0` — not Sonnet or Opus — preventing accidental expensive model invocations.
+
+---
+
+
 
 #### `daily_report.py` — Daily New Jobs Email
 
@@ -561,8 +631,8 @@ Packages Lambda functions and dependencies into deployment zip files.
 **Behavior:**
 
 1. Validates Python syntax across all `.py` files (compile check).
-2. Builds four code packages: `crawlers.zip`, `enrichment.zip`, `api.zip`, `reports.zip` — each includes its own handler(s) plus the `shared/` module.
-3. Builds `dependencies-layer.zip` — pip-installs all requirements into a Lambda layer structure (`python/lib/python3.12/site-packages/`).
+2. Builds five code packages: `crawlers.zip`, `enrichment.zip`, `api.zip`, `reports.zip`, `scoring.zip` — each includes its own handler(s) plus the `shared/` module.
+3. Builds `dependencies-layer.zip` — pip-installs all requirements into a Lambda layer structure (`python/lib/python3.12/site-packages/`). Verifies both `jobspy` and `pdfminer` are importable before zipping.
 4. Outputs all artifacts to `build/`.
 
 ---
@@ -636,7 +706,9 @@ Reads filter state from URL search params (making filters bookmark-shareable). C
 
 #### `src/pages/Settings.tsx` — User Preferences Page
 
-Three sections: **Search Preferences** (role queries as chip tags with add/remove, locations with distance radius and remote toggle, salary range min/max), **Email Notifications** (displays the Cognito account email as read-only, daily and weekly report toggles), and a save button with success/error feedback. Uses `useSettings` to fetch and `useUpdateSettings` to persist. The user's email is always the Cognito registration email — it cannot be changed from this page.
+Four sections: **Search Preferences** (role queries as chip tags with add/remove, locations with distance radius and remote toggle, salary range min/max), **Resume & AI Matching** (upload a PDF resume via drag-drop or file picker; shows processing/ready/error status; delete button; **Score My Jobs** button when resume is ready), **Email Notifications** (displays the Cognito account email as read-only, daily and weekly report toggles), and a save button with success/error feedback.
+
+The **Score My Jobs** button calls `POST /user/score-jobs`, sets `scoring_status = "scoring"` optimistically in local state, and shows a spinner. The button is disabled while scoring is in progress. Once `scoring_status = "done"` (polled on next `getSettings` call), the last scored job count and timestamp are displayed. Relies on `useSettings` + `useUpdateSettings` for fetch/persist, and `api.triggerScoring()` for the async invoke.
 
 ---
 
@@ -656,7 +728,7 @@ Top navigation with responsive mobile menu. Desktop view shows logo/home link, D
 
 #### `src/components/FilterBar.tsx` — Filter Controls
 
-Provides filtering controls: date range buttons (24h, 7d, 30d), minimum Glassdoor rating slider (1–5, 0.5 step), application status dropdown (all 7 statuses), text search input (searches role, company, location), sort dropdown (Most Recent, Highest Salary, Best Rated), and a clear-all button showing the active filter count.
+Provides filtering controls: date range buttons (24h, 7d, 30d), minimum Glassdoor rating slider (1–5, 0.5 step), application status dropdown (all 7 statuses), text search input (searches role, company, location), sort dropdown (Most Recent, Highest Salary, Best Rated, **Best Match ✦**), and a clear-all button showing the active filter count. The Best Match option is always present in the sort list; unscored jobs naturally fall to the bottom (null score sorts below 0).
 
 ---
 
@@ -668,7 +740,9 @@ Renders three states: loading (3 animated skeleton cards), error (red error box 
 
 #### `src/components/JobCard.tsx` — Job Listing Card
 
-Displays a single job with: role name and application status dropdown in the header; company name, Glassdoor rating badge, source badge (color-coded), location, posted date (relative — "2 days ago"), salary range, and "View Posting" external link in the meta row; benefits pills when present; and truncated notes. Calls `useUpdateStatus` when the status dropdown changes.
+Displays a single job with: role name and application status dropdown in the header; company name, Glassdoor rating badge, source badge (color-coded), **AI match score badge** (green ≥80, yellow 60–79, red <60, hidden when null), location, posted date (relative — "2 days ago"), salary range, and "View Posting" external link in the meta row; benefits pills when present; AI match reasoning as italic text beneath the card (only when a score exists); and truncated notes. Calls `useUpdateStatus` when the status dropdown changes.
+
+The `MatchScoreBadge` sub-component renders the 0–100 score with a tooltip showing the one-sentence reasoning from Bedrock. It is only rendered when `matchScore` is non-null.
 
 ---
 
@@ -729,8 +803,12 @@ Provides an `api` object with five methods that handle Cognito authentication tr
 - `api.getJobs(filters, page, pageSize)` — `GET /jobs` with query parameters.
 - `api.getJob(jobId)` — `GET /jobs/{jobId}`.
 - `api.updateStatus(jobId, status, notes?)` — `PATCH /jobs/{jobId}/status`.
-- `api.getSettings()` — `GET /user/settings`.
+- `api.getSettings()` — `GET /user/settings`. Maps `resume_status`, `resume_filename`, `scoring_status`, `last_scored_at`, `last_scored_count` from the snake_case API response.
 - `api.updateSettings(settings)` — `PUT /user/settings`.
+- `api.getResumeUploadUrl()` — `POST /user/resume/upload-url`. Returns `{uploadUrl, s3Key, expiresIn}`.
+- `api.uploadResumeTos3(uploadUrl, file)` — Direct S3 PUT using the pre-signed URL. Bypasses the API for performance; sets `Content-Type: application/pdf`.
+- `api.deleteResume()` — `DELETE /user/resume`.
+- `api.triggerScoring()` — `POST /user/score-jobs`. Returns 202 `{message}`. Scoring runs asynchronously — poll `getSettings()` to track progress via `scoringStatus`.
 
 ---
 
@@ -738,14 +816,16 @@ Provides an `api` object with five methods that handle Cognito authentication tr
 
 #### `src/types/index.ts` — TypeScript Definitions
 
-- `Job` — 20 fields: jobId, roleName, company, location, salaryMin/Max, ptoDays, sickDays, match401k, benefits, postedDate, sourceUrl, source, glassdoorRating, glassdoorUrl, createdAt, description, jobType, applicationStatus, notes.
+- `Job` — 22 fields: jobId, roleName, company, location, salaryMin/Max, ptoDays, sickDays, match401k, benefits, postedDate, sourceUrl, source, glassdoorRating, glassdoorUrl, createdAt, description, jobType, applicationStatus, notes, **matchScore** (number | null), **matchReasoning** (string | null).
 - `ApplicationStatus` — Union type: `NOT_APPLIED` | `NOT_INTERESTED` | `APPLIED` | `RECRUITER_INTERVIEW` | `TECHNICAL_INTERVIEW` | `OFFER_RECEIVED` | `OFFER_ACCEPTED`.
 - `DateRange` — Union type: `24h` | `7d` | `30d`.
 - `JobSource` — Union type: `linkedin` | `indeed` | `dice` | `glassdoor` | `ziprecruiter`.
-- `JobFilters` — Object with optional fields: dateRange, status, search, sort, sources.
+- `JobFilters` — Object with optional fields: dateRange, status, search, sort (`'date' | 'salary' | 'rating' | 'match'`), sources.
 - `SearchLocation` — Object: location (string), distance (number | null), remote (boolean).
 - `SearchPreferences` — Object: roleQueries, locations, salaryMin, salaryMax.
-- `UserSettings` — Object: email, dailyReport, weeklyReport, searchPreferences.
+- `ResumeStatus` — Union type: `'processing' | 'ready' | 'error' | 'deleted' | null`.
+- `ScoringStatus` — Union type: `'scoring' | 'done' | null`.
+- `UserSettings` — Object: email, dailyReport, weeklyReport, searchPreferences, resumeStatus, resumeFilename, **scoringStatus**, **lastScoredAt**, **lastScoredCount**.
 - `PaginatedResponse<T>` — Generic: items, totalCount, page, pageSize, hasMore.
 
 ---
@@ -854,6 +934,19 @@ See [Database Schema](#database-schema) below for details.
 
 ---
 
+### Scoring Module (`terraform/modules/scoring/`)
+
+Provisions the resume storage and AI scoring infrastructure.
+
+**Resources:**
+
+- `aws_s3_bucket.resumes` — Private resume bucket (`scout-resumes-{account_id}`). AES-256 SSE, versioning with 30-day noncurrent expiration, CORS for browser direct PUT, public access fully blocked.
+- `aws_lambda_function.resume_parser` — `scout-resume-parser` (60s, 512MB). Triggered by S3 `ObjectCreated` on `resumes/*.pdf`. IAM: S3 `GetObject` on the resumes bucket, DynamoDB `UpdateItem` on users table.
+- `aws_lambda_function.job_scorer` — `scout-job-scorer` (300s, 512MB). Invoked async by `user_settings`. IAM: DynamoDB `Query`/`GetItem` on jobs + users tables; DynamoDB `PutItem`/`UpdateItem` on job-scores + users tables; Bedrock `InvokeModel` scoped to `anthropic.claude-3-haiku-20240307-v1:0` only.
+- CloudWatch log groups with 14-day retention for both functions.
+
+---
+
 ### API Module (`terraform/modules/api/`)
 
 Provisions the REST API Gateway, three API Lambda functions, and a shared Lambda dependency layer.
@@ -862,10 +955,11 @@ Provisions the REST API Gateway, three API Lambda functions, and a shared Lambda
 
 - `aws_api_gateway_rest_api.main` — The `scout-api` REST API.
 - Cognito authorizer linked to the User Pool.
-- API routes with CORS: `GET /jobs`, `GET /jobs/{jobId}`, `PATCH /jobs/{jobId}/status`, `GET|PUT /user/settings`, `OPTIONS` preflight on all.
+- API routes with CORS: `GET /jobs`, `GET /jobs/{jobId}`, `PATCH /jobs/{jobId}/status`, `GET|PUT /user/settings`, `POST /user/resume/upload-url`, `DELETE /user/resume`, `POST /user/score-jobs`, `OPTIONS` preflight on all resources.
 - Three Lambda functions: `scout-api-get-jobs` (30s, 256MB), `scout-api-update-status` (30s, 256MB), `scout-api-user-settings` (30s, 256MB).
-- Lambda dependency layer — shared Python packages (boto3, pydantic, etc.) uploaded to S3 and published as a Lambda layer version.
-- IAM role with DynamoDB access (GetItem, Query, Scan, PutItem, UpdateItem, DeleteItem) on all three user-facing tables.
+- Lambda dependency layer — shared Python packages uploaded to S3 and published as a Lambda layer version.
+- IAM role with DynamoDB access on all user-facing tables + job-scores table. S3 access (PutObject, GetObject, DeleteObject, HeadObject) on the resumes bucket. Bedrock `InvokeModel` on Claude Haiku. `lambda:InvokeFunction` on `scout-job-scorer` (for async scoring trigger).
+- `JOB_SCORER_FUNCTION_NAME` injected into `scout-api-user-settings` environment.
 - Stage `v1` with access logging (requestId, IP, latency, error).
 - CloudWatch log groups with 14-day retention.
 
@@ -975,7 +1069,7 @@ Triggers on push to `main` when only `frontend/**` changes, or via manual dispat
 
 **Run:** `cd backend/lambdas && PYTHONPATH=. python -m pytest tests/ -v --tb=short`
 
-**Test files (8 files, 90+ tests):**
+**Test files (10 files, 170+ tests):**
 
 | File | Tests | What it covers |
 |------|-------|---------------|
@@ -986,6 +1080,8 @@ Triggers on push to `main` when only `frontend/**` changes, or via manual dispat
 | `test_update_status.py` | 18 | All 7 statuses, validation, auth, env vars |
 | `test_user_settings.py` | 16 | GET/PUT settings, Cognito email, search prefs validation |
 | `test_enrichment.py` | 26 | Dedup, benefits, batch, edge cases, hash function |
+| `test_resume_parser.py` | 12 | S3 key parsing, PDF text extraction, DynamoDB status writes, error paths |
+| `test_scoring.py` | 12 | Bedrock score/reasoning, clamping, fence stripping, handler flow, error resilience |
 
 **Linting:** `ruff check lambdas/`
 
@@ -1067,8 +1163,28 @@ Triggers on push to `main` when only `frontend/**` changes, or via manual dispat
 | `search_locations` | List | User's target locations with distance/remote flags |
 | `salary_min` | Number | Minimum salary preference (nullable) |
 | `salary_max` | Number | Maximum salary preference (nullable) |
+| `resume_status` | String | `null` \| `"processing"` \| `"ready"` \| `"error"` \| `"deleted"` |
+| `resume_filename` | String | Original filename of the uploaded PDF (nullable) |
+| `resume_text` | String | Extracted text from the PDF, written by `resume_parser` (nullable) |
+| `scoring_status` | String | `null` \| `"scoring"` \| `"done"` |
+| `last_scored_at` | String | ISO timestamp of last completed scoring run (nullable) |
+| `last_scored_count` | Number | Jobs scored in the last run (nullable) |
 | `created_at` | String | ISO timestamp (set once, preserved on update) |
 | `updated_at` | String | ISO timestamp |
+
+---
+
+### `scout-job-scores` — AI Match Scores
+
+Stores per-user AI match scores for individual jobs. Created on demand by the job scorer; no deletion protection (scores can be regenerated).
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `pk` | String (partition key) | `USER#{cognito_sub}` |
+| `sk` | String (sort key) | `JOB#{job_hash}` |
+| `score` | Number | AI match score 0–100 |
+| `reasoning` | String | One-sentence explanation from Claude Haiku |
+| `scored_at` | String | ISO timestamp when the score was written |
 
 ---
 
@@ -1097,7 +1213,7 @@ List jobs with filtering and pagination.
 | `minRating` | query | — | Minimum Glassdoor rating (float) |
 | `status` | query | — | Filter by application status |
 | `search` | query | — | Text search (role, company, location) |
-| `sort` | query | `date` | `date`, `salary`, or `rating` |
+| `sort` | query | `date` | `date`, `salary`, `rating`, or `match` |
 | `page` | query | `1` | Page number |
 | `pageSize` | query | `20` | Items per page (10, 20, 50) |
 
@@ -1118,7 +1234,9 @@ List jobs with filtering and pagination.
       "salaryMax": 240000,
       "glassdoorRating": 4.2,
       "benefits": ["PTO", "Medical", "401(k)", "Remote Work"],
-      "applicationStatus": "NOT_APPLIED"
+      "applicationStatus": "NOT_APPLIED",
+      "matchScore": 84,
+      "matchReasoning": "Strong AWS and firewall background aligns well with the role's core requirements."
     }
   ],
   "total": 47,
@@ -1145,7 +1263,21 @@ Returns a single job with full details and the user's application status.
 
 ### `GET /user/settings`
 
-Returns user preferences including Cognito email (read-only), report toggles, and search preferences: `{email, dailyReport, weeklyReport, searchPreferences: {roleQueries, locations, salaryMin, salaryMax}}`.
+Returns user preferences including Cognito email (read-only), report toggles, search preferences, and resume/scoring state:
+
+```json
+{
+  "email": "user@example.com",
+  "dailyReport": true,
+  "weeklyReport": false,
+  "searchPreferences": { "roleQueries": [...], "locations": [...], "salaryMin": 180000, "salaryMax": null },
+  "resume_status": "ready",
+  "resume_filename": "resume-2026.pdf",
+  "scoring_status": "done",
+  "last_scored_at": "2026-04-13T14:30:00Z",
+  "last_scored_count": 87
+}
+```
 
 ### `PUT /user/settings`
 
@@ -1166,6 +1298,24 @@ Returns user preferences including Cognito email (read-only), report toggles, an
   }
 }
 ```
+
+### `POST /user/resume/upload-url`
+
+Returns a short-lived pre-signed S3 PUT URL. The browser uploads directly to S3 using this URL — the file never passes through the API.
+
+**Response:** `{"uploadUrl": "https://s3.amazonaws.com/...", "s3Key": "resumes/{sub}/resume.pdf", "expiresIn": 300}`
+
+### `DELETE /user/resume`
+
+Deletes the user's resume from S3 and clears `resume_text`, `resume_status`, `resume_filename`, and all scoring fields from DynamoDB. Returns `{"success": true}`.
+
+### `POST /user/score-jobs`
+
+Triggers async AI match scoring. Requires `resume_status == "ready"`. Returns 409 if scoring is already in progress.
+
+**Response (202):** `{"message": "Scoring started. This may take 1–2 minutes."}`
+
+After the scorer Lambda finishes, `GET /user/settings` will return `scoring_status: "done"` and `last_scored_count`. Job scores are then available via `GET /jobs?sort=match`.
 
 ---
 
@@ -1389,7 +1539,19 @@ aws cloudfront create-invalidation \
 | `JOBS_TABLE` | DynamoDB jobs table name |
 | `USER_STATUS_TABLE` | DynamoDB user-status table name |
 | `USERS_TABLE` | DynamoDB users table name |
+| `JOB_SCORES_TABLE` | DynamoDB job-scores table name (`get_jobs` only) |
+| `RESUMES_BUCKET` | S3 resume bucket name (`user_settings` only) |
+| `JOB_SCORER_FUNCTION_NAME` | Name of the job-scorer Lambda to invoke async (`user_settings` only) |
 | `SITE_URL` | https://scout.carniaux.io (for CORS) |
+
+### Scoring Lambdas (resume-parser + job-scorer)
+
+| Variable | Lambda | Description |
+|----------|--------|-------------|
+| `USERS_TABLE` | both | DynamoDB users table name |
+| `JOBS_TABLE` | job-scorer | DynamoDB jobs table name |
+| `JOB_SCORES_TABLE` | job-scorer | DynamoDB job-scores table name |
+| `BEDROCK_MODEL_ID` | job-scorer | `anthropic.claude-3-haiku-20240307-v1:0` |
 
 ### Report Lambdas (2 functions)
 
@@ -1446,18 +1608,19 @@ Estimated monthly cost for a handful of users with daily crawling:
 | Service | Estimated Cost | Notes |
 |---------|---------------|-------|
 | Oxylabs Web Scraper | ~$30–35 | Dominant cost; per-request pricing |
-| Lambda | ~$2–3 | 13 functions, mostly short-lived |
+| Amazon Bedrock (Claude Haiku) | ~$0.50–1 | ~100 jobs × a few users per run; $0.80/1M input tokens |
+| Lambda | ~$2–3 | 15 functions, mostly short-lived |
 | DynamoDB | ~$1–2 | On-demand, low throughput |
 | CloudFront | ~$1 | Minimal traffic |
-| S3 | < $1 | Small frontend bundle |
+| S3 | < $1 | Frontend bundle + resume PDFs |
 | API Gateway | < $1 | Low request volume |
 | SES | < $1 | A few emails per week |
 | Route 53 | $0.50 | Hosted zone |
 | Secrets Manager | $0.40 | 1 secret |
 | CloudWatch | < $1 | Logs + alarms |
-| **Total** | **~$40–45/month** | |
+| **Total** | **~$40–46/month** | |
 
-JobSpy (used for LinkedIn and Indeed) is free and open-source. The Oxylabs subscription for Glassdoor, ZipRecruiter, and Dice is the dominant cost driver.
+JobSpy (used for LinkedIn and Indeed) is free and open-source. The Oxylabs subscription for Glassdoor, ZipRecruiter, and Dice is the dominant cost driver. Bedrock Claude Haiku is the most cost-effective Anthropic model — a typical scoring run (100 jobs × ~300 input tokens + ~50 output tokens) costs roughly $0.03.
 
 ---
 
