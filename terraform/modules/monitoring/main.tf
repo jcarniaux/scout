@@ -196,6 +196,48 @@ resource "aws_cloudwatch_dashboard" "main" {
             ["AWS/SES", "Complaint"]
           ]
         }
+      },
+      # Widget 5 — Enrichment pipeline custom metrics (EMF)
+      {
+        type   = "metric"
+        x      = 0
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Enrichment Pipeline"
+          region = var.aws_region
+          period = 300
+          stat   = "Sum"
+          metrics = [
+            ["Scout/Enrichment", "JobsProcessed"],
+            ["Scout/Enrichment", "JobsStored"],
+            ["Scout/Enrichment", "JobsDuplicate"],
+            ["Scout/Enrichment", "JobsFiltered"],
+            ["Scout/Enrichment", "BatchFailures"]
+          ]
+        }
+      },
+      # Widget 6 — Per-crawler custom metrics (EMF)
+      {
+        type   = "metric"
+        x      = 12
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Crawler Jobs Sent (by source)"
+          region = var.aws_region
+          period = 300
+          stat   = "Sum"
+          metrics = [
+            ["Scout/Crawlers", "JobsSent", "source", "linkedin"],
+            ["Scout/Crawlers", "JobsSent", "source", "indeed"],
+            ["Scout/Crawlers", "JobsSent", "source", "dice"],
+            ["Scout/Crawlers", "JobsSent", "source", "glassdoor"],
+            ["Scout/Crawlers", "JobsSent", "source", "ziprecruiter"]
+          ]
+        }
       }
     ]
   })

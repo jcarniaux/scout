@@ -43,6 +43,32 @@ resource "aws_acm_certificate_validation" "main" {
   depends_on = [aws_route53_record.acm_validation]
 }
 
+# ─── Shared Lambda Layer ─────────────────────────────────────────────────────
+# Contains backend/lambdas/shared/ (db, models, response, crawler_utils, etc.)
+# so every Lambda gets the same version of common code without duplicating it
+# inside each deployment package.  CI/CD publishes the real layer; Terraform
+# uses a placeholder to bootstrap the resource.
+data "archive_file" "shared_layer_placeholder" {
+  type        = "zip"
+  output_path = "${path.module}/shared_layer_placeholder.zip"
+  source {
+    content  = "# Placeholder - deployed via CI/CD"
+    filename = "python/shared/__init__.py"
+  }
+}
+
+resource "aws_lambda_layer_version" "shared" {
+  layer_name          = "${var.project_name}-shared"
+  filename            = data.archive_file.shared_layer_placeholder.output_path
+  compatible_runtimes = ["python3.12"]
+  description         = "Shared utilities: db, models, response, crawler_utils, oxylabs_client"
+
+  lifecycle {
+    # CI/CD publishes new versions; Terraform should not revert to placeholder.
+    ignore_changes = [filename, source_code_hash]
+  }
+}
+
 # Cognito Auth Module
 module "auth" {
   source = "./modules/auth"
@@ -77,6 +103,7 @@ module "api" {
   dynamodb_users_table_arn        = module.data.dynamodb_users_table_arn
   domain_name                     = var.domain_name
   subdomain                       = var.subdomain
+  shared_layer_arn                = aws_lambda_layer_version.shared.arn
 
   depends_on = [
     module.auth,
@@ -100,6 +127,7 @@ module "crawl" {
   dynamodb_glassdoor_cache_table_arn  = module.data.dynamodb_glassdoor_cache_table_arn
   dynamodb_users_table_name           = module.data.dynamodb_users_table_name
   dynamodb_users_table_arn            = module.data.dynamodb_users_table_arn
+  shared_layer_arn                    = aws_lambda_layer_version.shared.arn
 
   depends_on = [module.data]
 }
@@ -123,6 +151,7 @@ module "email" {
   domain_name                     = var.domain_name
   subdomain                       = var.subdomain
   route53_zone_id                 = data.aws_route53_zone.root.zone_id
+  shared_layer_arn                = aws_lambda_layer_version.shared.arn
 
   depends_on = [module.data]
 }

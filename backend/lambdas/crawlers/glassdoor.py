@@ -22,6 +22,7 @@ from urllib.parse import urlencode, quote_plus
 import boto3
 from bs4 import BeautifulSoup, Tag
 
+from shared.metrics import emit_metric
 from shared.search_config import load_search_config
 from shared.crawler_utils import meets_salary_requirement
 from shared.oxylabs_client import OxylabsClient
@@ -402,6 +403,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             break
 
     logger.info(f"Glassdoor crawl complete: {total_sent} sent, {total_errors} errors")
+
+    emit_metric("Scout/Crawlers", "JobsSent", total_sent, source="glassdoor")
+    emit_metric("Scout/Crawlers", "Errors", total_errors, source="glassdoor")
+
     return {
         "statusCode": 200,
         "source": "glassdoor",

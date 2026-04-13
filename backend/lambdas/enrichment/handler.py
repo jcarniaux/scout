@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Optional
 import requests
 
 from shared.db import DynamoDBHelper
+from shared.metrics import emit_metric
 from shared.models import dynamo_serialize
 from shared.crawler_utils import meets_location_requirement
 
@@ -334,5 +335,12 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         f"{total_stored} stored, {total_duplicates} duplicates, "
         f"{total_filtered} filtered, {len(batch_item_failures)} failures"
     )
+
+    # Emit custom CloudWatch metrics via Embedded Metric Format
+    emit_metric("Scout/Enrichment", "JobsProcessed", total_processed)
+    emit_metric("Scout/Enrichment", "JobsStored", total_stored)
+    emit_metric("Scout/Enrichment", "JobsDuplicate", total_duplicates)
+    emit_metric("Scout/Enrichment", "JobsFiltered", total_filtered)
+    emit_metric("Scout/Enrichment", "BatchFailures", len(batch_item_failures))
 
     return {"batchItemFailures": batch_item_failures}

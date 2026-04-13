@@ -97,6 +97,8 @@ resource "aws_iam_role_policy" "step_functions_lambda_policy" {
         "${aws_lambda_function.crawler_linkedin.arn}",
         "${aws_lambda_function.crawler_indeed.arn}",
         "${aws_lambda_function.crawler_dice.arn}",
+        "${aws_lambda_function.crawler_glassdoor.arn}",
+        "${aws_lambda_function.crawler_ziprecruiter.arn}",
         "${aws_lambda_function.purge_lambda.arn}"
       ]
     }]
@@ -165,6 +167,59 @@ resource "aws_iam_role_policy" "crawler_policy" {
   })
 }
 
+# ─── CloudWatch Log Groups ──────────────────────────────────────────────────
+# Explicit log groups with 14-day retention.  Without these, Lambda
+# auto-creates /aws/lambda/{name} log groups that retain logs forever,
+# inflating CloudWatch storage costs over time.
+
+resource "aws_cloudwatch_log_group" "crawler_linkedin" {
+  name              = "/aws/lambda/${var.project_name}-crawler-linkedin"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-crawler-linkedin-logs" }
+}
+
+resource "aws_cloudwatch_log_group" "crawler_indeed" {
+  name              = "/aws/lambda/${var.project_name}-crawler-indeed"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-crawler-indeed-logs" }
+}
+
+resource "aws_cloudwatch_log_group" "crawler_glassdoor" {
+  name              = "/aws/lambda/${var.project_name}-crawler-glassdoor"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-crawler-glassdoor-logs" }
+}
+
+resource "aws_cloudwatch_log_group" "crawler_ziprecruiter" {
+  name              = "/aws/lambda/${var.project_name}-crawler-ziprecruiter"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-crawler-ziprecruiter-logs" }
+}
+
+resource "aws_cloudwatch_log_group" "crawler_dice" {
+  name              = "/aws/lambda/${var.project_name}-crawler-dice"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-crawler-dice-logs" }
+}
+
+resource "aws_cloudwatch_log_group" "crawl_diagnose" {
+  name              = "/aws/lambda/${var.project_name}-crawl-diagnose"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-crawl-diagnose-logs" }
+}
+
+resource "aws_cloudwatch_log_group" "enrichment" {
+  name              = "/aws/lambda/${var.project_name}-enrichment"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-enrichment-logs" }
+}
+
+resource "aws_cloudwatch_log_group" "purge" {
+  name              = "/aws/lambda/${var.project_name}-purge"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-purge-logs" }
+}
+
 # Crawler Lambda functions (5 branches)
 
 resource "aws_lambda_function" "crawler_linkedin" {
@@ -175,6 +230,7 @@ resource "aws_lambda_function" "crawler_linkedin" {
   runtime       = "python3.12"
   timeout       = 900
   memory_size   = 512
+  layers        = [var.shared_layer_arn]
 
   tracing_config {
     mode = "Active"
@@ -191,6 +247,8 @@ resource "aws_lambda_function" "crawler_linkedin" {
   tags = {
     Name = "${var.project_name}-crawler-linkedin"
   }
+
+  depends_on = [aws_cloudwatch_log_group.crawler_linkedin]
 }
 
 resource "aws_lambda_function" "crawler_indeed" {
@@ -201,6 +259,7 @@ resource "aws_lambda_function" "crawler_indeed" {
   runtime       = "python3.12"
   timeout       = 900
   memory_size   = 512
+  layers        = [var.shared_layer_arn]
 
   tracing_config {
     mode = "Active"
@@ -217,6 +276,8 @@ resource "aws_lambda_function" "crawler_indeed" {
   tags = {
     Name = "${var.project_name}-crawler-indeed"
   }
+
+  depends_on = [aws_cloudwatch_log_group.crawler_indeed]
 }
 
 resource "aws_lambda_function" "crawler_glassdoor" {
@@ -227,6 +288,7 @@ resource "aws_lambda_function" "crawler_glassdoor" {
   runtime       = "python3.12"
   timeout       = 900
   memory_size   = 512
+  layers        = [var.shared_layer_arn]
 
   tracing_config {
     mode = "Active"
@@ -243,6 +305,8 @@ resource "aws_lambda_function" "crawler_glassdoor" {
   tags = {
     Name = "${var.project_name}-crawler-glassdoor"
   }
+
+  depends_on = [aws_cloudwatch_log_group.crawler_glassdoor]
 }
 
 resource "aws_lambda_function" "crawler_ziprecruiter" {
@@ -253,6 +317,7 @@ resource "aws_lambda_function" "crawler_ziprecruiter" {
   runtime       = "python3.12"
   timeout       = 900
   memory_size   = 512
+  layers        = [var.shared_layer_arn]
 
   tracing_config {
     mode = "Active"
@@ -269,6 +334,8 @@ resource "aws_lambda_function" "crawler_ziprecruiter" {
   tags = {
     Name = "${var.project_name}-crawler-ziprecruiter"
   }
+
+  depends_on = [aws_cloudwatch_log_group.crawler_ziprecruiter]
 }
 
 resource "aws_lambda_function" "crawler_dice" {
@@ -279,6 +346,7 @@ resource "aws_lambda_function" "crawler_dice" {
   runtime       = "python3.12"
   timeout       = 900
   memory_size   = 512
+  layers        = [var.shared_layer_arn]
 
   tracing_config {
     mode = "Active"
@@ -295,6 +363,8 @@ resource "aws_lambda_function" "crawler_dice" {
   tags = {
     Name = "${var.project_name}-crawler-dice"
   }
+
+  depends_on = [aws_cloudwatch_log_group.crawler_dice]
 }
 
 # Diagnostic Lambda — read-only crawler pipeline tester
@@ -307,6 +377,7 @@ resource "aws_lambda_function" "crawl_diagnose" {
   runtime       = "python3.12"
   timeout       = 900
   memory_size   = 512
+  layers        = [var.shared_layer_arn]
 
   tracing_config {
     mode = "Active"
@@ -322,6 +393,8 @@ resource "aws_lambda_function" "crawl_diagnose" {
   tags = {
     Name = "${var.project_name}-crawl-diagnose"
   }
+
+  depends_on = [aws_cloudwatch_log_group.crawl_diagnose]
 }
 
 # IAM role for enrichment Lambda
@@ -401,6 +474,7 @@ resource "aws_lambda_function" "enrichment_lambda" {
   runtime       = "python3.12"
   timeout       = 300
   memory_size   = 512
+  layers        = [var.shared_layer_arn]
 
   tracing_config {
     mode = "Active"
@@ -417,6 +491,8 @@ resource "aws_lambda_function" "enrichment_lambda" {
   tags = {
     Name = "${var.project_name}-enrichment"
   }
+
+  depends_on = [aws_cloudwatch_log_group.enrichment]
 }
 
 # SQS event source mapping for enrichment Lambda
@@ -491,6 +567,7 @@ resource "aws_lambda_function" "purge_lambda" {
   runtime       = "python3.12"
   timeout       = 60
   memory_size   = 256
+  layers        = [var.shared_layer_arn]
 
   tracing_config {
     mode = "Active"
@@ -506,6 +583,8 @@ resource "aws_lambda_function" "purge_lambda" {
   tags = {
     Name = "${var.project_name}-purge"
   }
+
+  depends_on = [aws_cloudwatch_log_group.purge]
 }
 
 # Step Functions State Machine Definition (JSON)
@@ -513,10 +592,12 @@ resource "aws_sfn_state_machine" "crawl" {
   name     = "${var.project_name}-crawl-state-machine"
   role_arn = aws_iam_role.step_functions_role.arn
   definition = templatefile("${path.module}/state_machine.json", {
-    linkedin_lambda_arn = aws_lambda_function.crawler_linkedin.arn
-    indeed_lambda_arn   = aws_lambda_function.crawler_indeed.arn
-    dice_lambda_arn     = aws_lambda_function.crawler_dice.arn
-    purge_lambda_arn    = aws_lambda_function.purge_lambda.arn
+    linkedin_lambda_arn     = aws_lambda_function.crawler_linkedin.arn
+    indeed_lambda_arn       = aws_lambda_function.crawler_indeed.arn
+    dice_lambda_arn         = aws_lambda_function.crawler_dice.arn
+    glassdoor_lambda_arn    = aws_lambda_function.crawler_glassdoor.arn
+    ziprecruiter_lambda_arn = aws_lambda_function.crawler_ziprecruiter.arn
+    purge_lambda_arn        = aws_lambda_function.purge_lambda.arn
   })
 
   tags = {

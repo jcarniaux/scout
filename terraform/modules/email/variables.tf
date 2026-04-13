@@ -72,3 +72,8 @@ variable "subdomain" {
   description = "Subdomain for the app"
   type        = string
 }
+
+variable "shared_layer_arn" {
+  description = "ARN of the shared Lambda Layer (db, models, email_templates, etc.)"
+  type        = string
+}

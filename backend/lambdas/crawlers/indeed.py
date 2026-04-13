@@ -18,6 +18,7 @@ from typing import Dict, Any, Set
 import boto3
 from jobspy import scrape_jobs
 
+from shared.metrics import emit_metric
 from shared.search_config import load_search_config
 from shared.crawler_utils import (
     extract_salary_min,
@@ -137,6 +138,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 continue
 
     logger.info(f"Indeed crawl complete: {total_sent} sent, {total_errors} errors")
+
+    emit_metric("Scout/Crawlers", "JobsSent", total_sent, source="indeed")
+    emit_metric("Scout/Crawlers", "Errors", total_errors, source="indeed")
+
     return {
         "statusCode": 200,
         "source": "indeed",

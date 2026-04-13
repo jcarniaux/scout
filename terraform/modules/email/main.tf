@@ -106,6 +106,19 @@ resource "aws_iam_role_policy" "report_policy" {
   })
 }
 
+# ─── Lambda Log Groups ──────────────────────────────────────────────────────
+resource "aws_cloudwatch_log_group" "daily_report" {
+  name              = "/aws/lambda/${var.project_name}-daily-report"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-daily-report-logs" }
+}
+
+resource "aws_cloudwatch_log_group" "weekly_report" {
+  name              = "/aws/lambda/${var.project_name}-weekly-report"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-weekly-report-logs" }
+}
+
 # Daily report Lambda
 resource "aws_lambda_function" "daily_report" {
   filename      = data.archive_file.lambda_placeholder.output_path
@@ -115,6 +128,7 @@ resource "aws_lambda_function" "daily_report" {
   runtime       = "python3.12"
   timeout       = 60
   memory_size   = 256
+  layers        = [var.shared_layer_arn]
 
   environment {
     variables = {
@@ -128,6 +142,8 @@ resource "aws_lambda_function" "daily_report" {
   tags = {
     Name = "${var.project_name}-daily-report"
   }
+
+  depends_on = [aws_cloudwatch_log_group.daily_report]
 }
 
 # Weekly report Lambda
@@ -139,6 +155,7 @@ resource "aws_lambda_function" "weekly_report" {
   runtime       = "python3.12"
   timeout       = 60
   memory_size   = 256
+  layers        = [var.shared_layer_arn]
 
   environment {
     variables = {
@@ -153,6 +170,8 @@ resource "aws_lambda_function" "weekly_report" {
   tags = {
     Name = "${var.project_name}-weekly-report"
   }
+
+  depends_on = [aws_cloudwatch_log_group.weekly_report]
 }
 
 # Lambda permissions for EventBridge

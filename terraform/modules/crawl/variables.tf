@@ -57,3 +57,8 @@ variable "dynamodb_users_table_arn" {
   description = "DynamoDB users table ARN"
   type        = string
 }
+
+variable "shared_layer_arn" {
+  description = "ARN of the shared Lambda Layer (db, models, crawler_utils, etc.)"
+  type        = string
+}

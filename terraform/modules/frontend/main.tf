@@ -14,13 +14,39 @@ resource "aws_s3_bucket" "frontend" {
     ignore_changes = [
       grant,
       server_side_encryption_configuration,
-      versioning,
     ]
 
     # Hard safety net: prevent accidental deletion of the live frontend bucket.
     # To intentionally destroy, remove this flag first.
     prevent_destroy = true
   }
+}
+
+# Enable versioning — allows rollback if a bad deploy overwrites assets, and
+# is required for S3 replication if DR is ever needed.
+resource "aws_s3_bucket_versioning" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Lifecycle rule: expire previous versions after 30 days to keep storage
+# costs in check.  Current versions are untouched.
+resource "aws_s3_bucket_lifecycle_configuration" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+
+  rule {
+    id     = "expire-old-versions"
+    status = "Enabled"
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.frontend]
 }
 
 # Block all public access

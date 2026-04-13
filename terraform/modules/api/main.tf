@@ -109,6 +109,27 @@ resource "aws_iam_role_policy" "lambda_dynamodb_policy" {
   })
 }
 
+# ─── Lambda Log Groups ──────────────────────────────────────────────────────
+# Explicit log groups with 14-day retention prevent Lambda from auto-creating
+# /aws/lambda/{name} groups that retain logs forever.
+resource "aws_cloudwatch_log_group" "get_jobs" {
+  name              = "/aws/lambda/${var.project_name}-api-get-jobs"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-api-get-jobs-logs" }
+}
+
+resource "aws_cloudwatch_log_group" "patch_job_status" {
+  name              = "/aws/lambda/${var.project_name}-api-update-status"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-api-update-status-logs" }
+}
+
+resource "aws_cloudwatch_log_group" "user_settings" {
+  name              = "/aws/lambda/${var.project_name}-api-user-settings"
+  retention_in_days = 14
+  tags              = { Name = "${var.project_name}-api-user-settings-logs" }
+}
+
 # GET /jobs - List jobs
 resource "aws_lambda_function" "get_jobs" {
   filename      = data.archive_file.lambda_placeholder.output_path
@@ -118,6 +139,7 @@ resource "aws_lambda_function" "get_jobs" {
   runtime       = "python3.12"
   timeout       = 30
   memory_size   = 256
+  layers        = [var.shared_layer_arn]
 
   tracing_config {
     mode = "Active"
@@ -135,6 +157,8 @@ resource "aws_lambda_function" "get_jobs" {
   tags = {
     Name = "${var.project_name}-api-get-jobs"
   }
+
+  depends_on = [aws_cloudwatch_log_group.get_jobs]
 }
 
 # NOTE: GET /jobs/{jobId} reuses the get_jobs Lambda — the handler
@@ -149,6 +173,7 @@ resource "aws_lambda_function" "patch_job_status" {
   runtime       = "python3.12"
   timeout       = 30
   memory_size   = 256
+  layers        = [var.shared_layer_arn]
 
   tracing_config {
     mode = "Active"
@@ -164,6 +189,8 @@ resource "aws_lambda_function" "patch_job_status" {
   tags = {
     Name = "${var.project_name}-api-update-status"
   }
+
+  depends_on = [aws_cloudwatch_log_group.patch_job_status]
 }
 
 # GET /user/settings - Get user settings
@@ -175,6 +202,7 @@ resource "aws_lambda_function" "get_user_settings" {
   runtime       = "python3.12"
   timeout       = 30
   memory_size   = 256
+  layers        = [var.shared_layer_arn]
 
   tracing_config {
     mode = "Active"
@@ -190,6 +218,8 @@ resource "aws_lambda_function" "get_user_settings" {
   tags = {
     Name = "${var.project_name}-api-user-settings"
   }
+
+  depends_on = [aws_cloudwatch_log_group.user_settings]
 }
 
 # NOTE: PUT /user/settings reuses the get_user_settings Lambda — the handler
